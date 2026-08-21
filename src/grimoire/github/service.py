@@ -320,15 +320,24 @@ async def fetch_repository_stats(
                         continue
                     try:
                         runs = await client.get_workflow_runs(repo.full_name, wf_id, branch)
-                        if runs is not None and not runs and branch == repo.default_branch:
-                            # No runs with head_branch == branch. This happens for
-                            # workflows triggered by non-branch events (e.g. `release`,
-                            # tag pushes) whose head_branch is the tag, never the
-                            # tracked branch. Only fall back for the default branch:
-                            # these workflows conceptually belong to it, and periodic/
-                            # release-only workflows should not appear under other
-                            # tracked branches that never ran them.
-                            runs = await client.get_workflow_runs(repo.full_name, wf_id)
+                        if runs is not None and branch == repo.default_branch:
+                            # Workflows triggered by non-branch events (e.g. `release`,
+                            # tag pushes) report head_branch as the tag, never the
+                            # tracked branch — so a branch-filtered run can exist but
+                            # be stale (e.g. an old failed run) while newer runs are
+                            # invisible to the filter. For the default branch only,
+                            # compare against the latest run overall and keep whichever
+                            # is more recent. Non-default branches never get this
+                            # fallback: periodic/release-only workflows should not be
+                            # shown as if they ran on branches that never triggered them.
+                            unscoped_runs = await client.get_workflow_runs(repo.full_name, wf_id)
+                            if unscoped_runs:
+                                latest_unscoped = unscoped_runs[0]
+                                latest_branch = runs[0] if runs else None
+                                if latest_branch is None or _run_created_at(
+                                    latest_unscoped
+                                ) > _run_created_at(latest_branch):
+                                    runs = unscoped_runs
                         if runs is not None and runs:
                             run = runs[0]
                             conclusion = run.get("conclusion") or "pending"
@@ -433,6 +442,11 @@ def _parse_dt(value: str | None) -> datetime | None:
         return datetime.fromisoformat(value.replace("Z", "+00:00"))
     except (ValueError, AttributeError):
         return None
+
+
+def _run_created_at(run: dict[str, Any]) -> datetime:
+    """Return a workflow run's creation time, or epoch if missing/invalid."""
+    return _parse_dt(run.get("created_at")) or datetime.min.replace(tzinfo=UTC)
 
 
 def _is_issue_stale(issue: dict[str, Any], cutoff: datetime) -> bool:

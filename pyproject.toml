@@ -1,6 +1,6 @@
 [project]
 name = "grimoire-dashboard"
-version = "0.1.10"
+version = "0.1.11"
 description = "Self-hostable GitHub repository monitoring dashboard"
 authors = [
     {name = "Luca Bello", email = "lusgabello@gmail.com"},
