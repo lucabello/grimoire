@@ -662,6 +662,133 @@ async def test_workflow_runs_prefers_newer_unscoped_run_over_stale_branch_match(
 
 
 @respx.mock
+async def test_workflow_runs_does_not_misattribute_other_branch_run_to_default(
+    client: GitHubClient,
+) -> None:
+    """A newer run triggered on a non-default tracked branch (e.g. `track/3.0`)
+    must not be reported as the default branch's status just because it's the
+    newest run overall."""
+    respx.get("https://api.github.com/repos/owner/repo1/issues").mock(
+        return_value=httpx.Response(200, json=[], headers=_rl_headers())
+    )
+    respx.get("https://api.github.com/repos/owner/repo1/pulls").mock(
+        return_value=httpx.Response(200, json=[], headers=_rl_headers())
+    )
+    respx.get("https://api.github.com/repos/owner/repo1/actions/workflows").mock(
+        return_value=httpx.Response(
+            200,
+            json={
+                "total_count": 1,
+                "workflows": [{"id": 42, "name": "Release", "html_url": "https://github.com/wf"}],
+            },
+            headers=_rl_headers(),
+        )
+    )
+
+    route = respx.get("https://api.github.com/repos/owner/repo1/actions/workflows/42/runs")
+
+    def _side_effect(request: httpx.Request) -> httpx.Response:
+        params = request.url.params
+        if params.get("branch") == "main":
+            return httpx.Response(
+                200,
+                json={
+                    "total_count": 1,
+                    "workflow_runs": [
+                        {
+                            "id": 100,
+                            "conclusion": "success",
+                            "html_url": "https://github.com/run/100",
+                            "head_branch": "main",
+                            "created_at": "2026-08-01T00:00:00Z",
+                        }
+                    ],
+                },
+                headers=_rl_headers(),
+            )
+        if params.get("branch") == "track/3.0":
+            return httpx.Response(
+                200,
+                json={
+                    "total_count": 1,
+                    "workflow_runs": [
+                        {
+                            "id": 200,
+                            "conclusion": "failure",
+                            "html_url": "https://github.com/run/200",
+                            "head_branch": "track/3.0",
+                            "created_at": "2026-08-20T00:00:00Z",
+                        }
+                    ],
+                },
+                headers=_rl_headers(),
+            )
+        # Unscoped fallback query (only for default branch): the latest run
+        # overall is actually the track/3.0 failure, newer than main's success.
+        return httpx.Response(
+            200,
+            json={
+                "total_count": 1,
+                "workflow_runs": [
+                    {
+                        "id": 200,
+                        "conclusion": "failure",
+                        "html_url": "https://github.com/run/200",
+                        "head_branch": "track/3.0",
+                        "created_at": "2026-08-20T00:00:00Z",
+                    }
+                ],
+            },
+            headers=_rl_headers(),
+        )
+
+    route.side_effect = _side_effect
+
+    respx.get("https://api.github.com/repos/owner/repo1/branches/main").mock(
+        return_value=httpx.Response(
+            200,
+            json={
+                "name": "main",
+                "commit": {
+                    "sha": "abc",
+                    "commit": {"committer": {"date": datetime.now(UTC).isoformat()}},
+                },
+            },
+            headers=_rl_headers(),
+        )
+    )
+    respx.get("https://api.github.com/repos/owner/repo1/branches/track/3.0").mock(
+        return_value=httpx.Response(
+            200,
+            json={
+                "name": "track/3.0",
+                "commit": {
+                    "sha": "def",
+                    "commit": {"committer": {"date": datetime.now(UTC).isoformat()}},
+                },
+            },
+            headers=_rl_headers(),
+        )
+    )
+    respx.get("https://api.github.com/repos/owner/repo1/branches").mock(
+        return_value=httpx.Response(200, json=[], headers=_rl_headers())
+    )
+
+    repo = TrackedRepository(
+        full_name="owner/repo1", default_branch="main", branches=["main", "track/3.0"]
+    )
+    staleness = StalenessConfig()
+    stats = await fetch_repository_stats(repo, client, staleness)
+
+    by_branch = {wf.branch: wf for wf in stats.workflows}
+    assert len(stats.workflows) == 2
+    assert by_branch["main"].status == "success"
+    assert by_branch["main"].run_url == "https://github.com/run/100"
+    assert by_branch["track/3.0"].status == "failure"
+    assert by_branch["track/3.0"].run_url == "https://github.com/run/200"
+
+
+@respx.mock
 async def test_workflow_runs_no_fallback_for_non_default_branch(client: GitHubClient) -> None:
     """Periodic/release-only workflows must not appear under non-default
     tracked branches, since they never actually ran there."""

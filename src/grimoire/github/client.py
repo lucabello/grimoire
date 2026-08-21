@@ -152,24 +152,26 @@ class GitHubClient:
         return data.get("workflows", [])
 
     async def get_workflow_runs(
-        self, full_name: str, workflow_id: int, branch: str | None = None
+        self, full_name: str, workflow_id: int, branch: str | None = None, per_page: int = 1
     ) -> list[dict[str, Any]] | None:
         """Return the latest run(s) for a workflow.
 
         If *branch* is given, filter to runs whose ``head_branch`` matches it
         (GitHub's server-side filter). If *branch* is ``None``, return the
-        single latest run regardless of branch — needed for workflows
-        triggered by non-branch events (e.g. ``release``, tag pushes),
-        whose ``head_branch`` never matches a tracked branch like ``main``.
+        latest runs regardless of branch — needed for workflows triggered by
+        non-branch events (e.g. ``release``, tag pushes), whose ``head_branch``
+        never matches a tracked branch like ``main``. Pass a larger *per_page*
+        in the unscoped case to allow filtering out runs that actually belong
+        to another tracked branch.
         """
         owner, repo = full_name.split("/", 1)
-        params: dict[str, Any] = {"per_page": 1}
+        params: dict[str, Any] = {"per_page": per_page}
         if branch is not None:
             params["branch"] = branch
         # Skip ETag caching: a run's conclusion/status can change without the
         # run list identity changing (same run ID, updated fields).  ETag-based
         # 304 responses would hide status transitions (e.g. in_progress → success).
-        # Since we fetch only 1 result (per_page=1), the bandwidth cost is negligible.
+        # Since we fetch only a handful of results, the bandwidth cost is negligible.
         data = await self._request(
             "GET",
             f"/repos/{owner}/{repo}/actions/workflows/{workflow_id}/runs",

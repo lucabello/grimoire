@@ -330,14 +330,29 @@ async def fetch_repository_stats(
                             # is more recent. Non-default branches never get this
                             # fallback: periodic/release-only workflows should not be
                             # shown as if they ran on branches that never triggered them.
-                            unscoped_runs = await client.get_workflow_runs(repo.full_name, wf_id)
+                            #
+                            # Runs whose head_branch is another *tracked* branch (e.g.
+                            # a release run actually triggered from `track/3.0`) must
+                            # be excluded here — otherwise they'd be misattributed to
+                            # the default branch just because they're the newest.
+                            other_branches = {b for b in repo.branches if b != branch}
+                            unscoped_runs = await client.get_workflow_runs(
+                                repo.full_name, wf_id, per_page=10
+                            )
                             if unscoped_runs:
-                                latest_unscoped = unscoped_runs[0]
+                                candidates = [
+                                    r
+                                    for r in unscoped_runs
+                                    if r.get("head_branch") not in other_branches
+                                ]
+                                latest_unscoped = candidates[0] if candidates else None
                                 latest_branch = runs[0] if runs else None
-                                if latest_branch is None or _run_created_at(
-                                    latest_unscoped
-                                ) > _run_created_at(latest_branch):
-                                    runs = unscoped_runs
+                                if latest_unscoped is not None and (
+                                    latest_branch is None
+                                    or _run_created_at(latest_unscoped)
+                                    > _run_created_at(latest_branch)
+                                ):
+                                    runs = [latest_unscoped]
                         if runs is not None and runs:
                             run = runs[0]
                             conclusion = run.get("conclusion") or "pending"
