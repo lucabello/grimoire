@@ -571,6 +571,63 @@ async def test_workflow_runs_falls_back_when_branch_filter_empty(client: GitHubC
     assert "branch" not in calls[1].request.url.params
 
 
+@respx.mock
+async def test_workflow_runs_no_fallback_for_non_default_branch(client: GitHubClient) -> None:
+    """Periodic/release-only workflows must not appear under non-default
+    tracked branches, since they never actually ran there."""
+    respx.get("https://api.github.com/repos/owner/repo1/issues").mock(
+        return_value=httpx.Response(200, json=[], headers=_rl_headers())
+    )
+    respx.get("https://api.github.com/repos/owner/repo1/pulls").mock(
+        return_value=httpx.Response(200, json=[], headers=_rl_headers())
+    )
+    respx.get("https://api.github.com/repos/owner/repo1/actions/workflows").mock(
+        return_value=httpx.Response(
+            200,
+            json={
+                "total_count": 1,
+                "workflows": [{"id": 42, "name": "Update", "html_url": "https://github.com/wf"}],
+            },
+            headers=_rl_headers(),
+        )
+    )
+
+    route = respx.get("https://api.github.com/repos/owner/repo1/actions/workflows/42/runs")
+    route.mock(
+        return_value=httpx.Response(
+            200, json={"total_count": 0, "workflow_runs": []}, headers=_rl_headers()
+        )
+    )
+
+    respx.get("https://api.github.com/repos/owner/repo1/branches/feature").mock(
+        return_value=httpx.Response(
+            200,
+            json={
+                "name": "feature",
+                "commit": {
+                    "sha": "abc",
+                    "commit": {"committer": {"date": datetime.now(UTC).isoformat()}},
+                },
+            },
+            headers=_rl_headers(),
+        )
+    )
+    respx.get("https://api.github.com/repos/owner/repo1/branches").mock(
+        return_value=httpx.Response(200, json=[], headers=_rl_headers())
+    )
+
+    repo = TrackedRepository(full_name="owner/repo1", default_branch="main", branches=["feature"])
+    staleness = StalenessConfig()
+    stats = await fetch_repository_stats(repo, client, staleness)
+
+    # No workflow status should be recorded for the non-default branch
+    assert len(stats.workflows) == 0
+
+    calls = route.calls
+    assert len(calls) == 1
+    assert "branch" in calls[0].request.url.params
+
+
 # ---------------------------------------------------------------------------
 # prune_removed_repos
 # ---------------------------------------------------------------------------
