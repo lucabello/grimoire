@@ -494,6 +494,83 @@ def _rl_headers() -> dict[str, str]:
     return {"X-RateLimit-Remaining": "4999", "X-RateLimit-Limit": "5000"}
 
 
+@respx.mock
+async def test_workflow_runs_falls_back_when_branch_filter_empty(client: GitHubClient) -> None:
+    """Non-branch-triggered workflows (e.g. `release`) have no runs matching a
+    tracked branch's head_branch. Grimoire should fall back to the latest run
+    overall and report it under the configured branch."""
+    respx.get("https://api.github.com/repos/owner/repo1/issues").mock(
+        return_value=httpx.Response(200, json=[], headers=_rl_headers())
+    )
+    respx.get("https://api.github.com/repos/owner/repo1/pulls").mock(
+        return_value=httpx.Response(200, json=[], headers=_rl_headers())
+    )
+    respx.get("https://api.github.com/repos/owner/repo1/actions/workflows").mock(
+        return_value=httpx.Response(
+            200,
+            json={
+                "total_count": 1,
+                "workflows": [{"id": 42, "name": "Release", "html_url": "https://github.com/wf"}],
+            },
+            headers=_rl_headers(),
+        )
+    )
+
+    route = respx.get("https://api.github.com/repos/owner/repo1/actions/workflows/42/runs")
+    route.side_effect = [
+        # First call (branch=main filter) returns no runs
+        httpx.Response(200, json={"total_count": 0, "workflow_runs": []}, headers=_rl_headers()),
+        # Fallback call (no branch filter) returns the latest release run
+        httpx.Response(
+            200,
+            json={
+                "total_count": 1,
+                "workflow_runs": [
+                    {
+                        "id": 999,
+                        "conclusion": "success",
+                        "html_url": "https://github.com/run/999",
+                        "head_branch": "v1.2.3",
+                    }
+                ],
+            },
+            headers=_rl_headers(),
+        ),
+    ]
+
+    respx.get("https://api.github.com/repos/owner/repo1/branches/main").mock(
+        return_value=httpx.Response(
+            200,
+            json={
+                "name": "main",
+                "commit": {
+                    "sha": "abc",
+                    "commit": {"committer": {"date": datetime.now(UTC).isoformat()}},
+                },
+            },
+            headers=_rl_headers(),
+        )
+    )
+    respx.get("https://api.github.com/repos/owner/repo1/branches").mock(
+        return_value=httpx.Response(200, json=[], headers=_rl_headers())
+    )
+
+    repo = TrackedRepository(full_name="owner/repo1", default_branch="main", branches=["main"])
+    staleness = StalenessConfig()
+    stats = await fetch_repository_stats(repo, client, staleness)
+
+    assert len(stats.workflows) == 1
+    assert stats.workflows[0].name == "Release"
+    assert stats.workflows[0].branch == "main"
+    assert stats.workflows[0].status == "success"
+    assert stats.workflows[0].run_url == "https://github.com/run/999"
+
+    calls = route.calls
+    assert len(calls) == 2
+    assert "branch" in calls[0].request.url.params
+    assert "branch" not in calls[1].request.url.params
+
+
 # ---------------------------------------------------------------------------
 # prune_removed_repos
 # ---------------------------------------------------------------------------

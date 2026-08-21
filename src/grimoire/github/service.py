@@ -320,6 +320,12 @@ async def fetch_repository_stats(
                         continue
                     try:
                         runs = await client.get_workflow_runs(repo.full_name, wf_id, branch)
+                        if runs is not None and not runs:
+                            # No runs with head_branch == branch. This happens for
+                            # workflows triggered by non-branch events (e.g. `release`,
+                            # tag pushes) whose head_branch is the tag, never the
+                            # tracked branch. Fall back to the latest run overall.
+                            runs = await client.get_workflow_runs(repo.full_name, wf_id)
                         if runs is not None and runs:
                             run = runs[0]
                             conclusion = run.get("conclusion") or "pending"

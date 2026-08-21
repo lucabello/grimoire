@@ -287,6 +287,25 @@ async def test_get_workflow_runs(client: GitHubClient) -> None:
 
 
 @respx.mock
+async def test_get_workflow_runs_without_branch(client: GitHubClient) -> None:
+    """When branch is None, the request omits the branch query param."""
+    route = respx.get("https://api.github.com/repos/owner/repo/actions/workflows/1/runs").mock(
+        return_value=httpx.Response(
+            200,
+            json={
+                "total_count": 1,
+                "workflow_runs": [{"id": 100, "conclusion": "success", "head_branch": "v1.2.3"}],
+            },
+            headers={"X-RateLimit-Remaining": "4999", "X-RateLimit-Limit": "5000"},
+        )
+    )
+    runs = await client.get_workflow_runs("owner/repo", 1)
+    assert runs is not None
+    assert runs[0]["head_branch"] == "v1.2.3"
+    assert "branch" not in route.calls[0].request.url.params
+
+
+@respx.mock
 async def test_get_workflow_runs_no_etag_caching(client: GitHubClient) -> None:
     """Workflow runs must not use ETag caching so status transitions are always visible."""
     route = respx.get("https://api.github.com/repos/owner/repo/actions/workflows/1/runs")
