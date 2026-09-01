@@ -92,6 +92,8 @@ class RepoViewModel:
     fetched_at: datetime | None = None
     last_commit_at: datetime | None = None
     total_branches: int = 0
+    include_checks: bool = True
+    include_stale: bool = True
 
     @property
     def has_problems(self) -> bool:
@@ -101,12 +103,14 @@ class RepoViewModel:
     def health_status(self) -> str:
         """Three-tier health: 'error', 'warning', or 'ok'.
 
-        Only error-severity check failures affect health.
-        Warning-severity failures are reported but do not influence status.
+        Only error-severity check failures affect health, and only when
+        `include_checks` is enabled. Warning-severity failures never
+        influence status. Staleness only affects health when `include_stale`
+        is enabled. Workflow failures always count.
         """
-        if self.workflow_failures or self.check_failures:
+        if self.workflow_failures or (self.include_checks and self.check_failures):
             return "error"
-        if self.stale_issues or self.stale_prs:
+        if self.include_stale and (self.stale_issues or self.stale_prs):
             return "warning"
         return "ok"
 
@@ -416,7 +420,9 @@ def _build_checks_for_repo(
     return checks_by_branch, check_failures, check_warnings
 
 
-async def _build_repo_viewmodels() -> list[RepoViewModel]:
+async def _build_repo_viewmodels(
+    include_checks: bool = True, include_stale: bool = True
+) -> list[RepoViewModel]:
     """Build view models from the in-memory GitHub cache + checks state."""
     from grimoire.github.router import _cache, _repos
 
@@ -461,6 +467,8 @@ async def _build_repo_viewmodels() -> list[RepoViewModel]:
                 fetched_at=stats.fetched_at,
                 last_commit_at=stats.last_commit_at,
                 total_branches=stats.total_branches,
+                include_checks=include_checks,
+                include_stale=include_stale,
             )
         )
     return viewmodels
@@ -472,7 +480,13 @@ async def _build_repo_viewmodels() -> list[RepoViewModel]:
 
 
 @router.get("/", response_class=HTMLResponse)
-async def dashboard(request: Request, sort: str = "name", dir: str = "asc") -> HTMLResponse:
+async def dashboard(
+    request: Request,
+    sort: str = "name",
+    dir: str = "asc",
+    include_checks: bool = True,
+    include_stale: bool = True,
+) -> HTMLResponse:
     """Dashboard page — lists all tracked repositories."""
     from grimoire.github.router import _last_refresh
     from grimoire.github.service import get_refresh_progress, is_refresh_running
@@ -480,7 +494,7 @@ async def dashboard(request: Request, sort: str = "name", dir: str = "asc") -> H
     refresh_running = is_refresh_running()
     refresh_progress = get_refresh_progress()
 
-    repos = await _build_repo_viewmodels()
+    repos = await _build_repo_viewmodels(include_checks, include_stale)
 
     # Initial loading state: no repos yet and a refresh is in progress
     if not repos and refresh_running:
@@ -518,6 +532,8 @@ async def dashboard(request: Request, sort: str = "name", dir: str = "asc") -> H
             "last_refresh_ago": last_refresh_ago,
             "sort": sort,
             "dir": dir,
+            "include_checks": include_checks,
+            "include_stale": include_stale,
             "sort_labels": SORT_LABELS,
             "staleness": _staleness_config,
             "time_ago": _time_ago,
@@ -724,18 +740,24 @@ async def checks_page(request: Request) -> HTMLResponse:
 # ---------------------------------------------------------------------------
 
 
-async def _build_sorted_repos(sort: str, direction: str) -> list[RepoViewModel]:
+async def _build_sorted_repos(
+    sort: str, direction: str, include_checks: bool = True, include_stale: bool = True
+) -> list[RepoViewModel]:
     """Build and sort repo view models (shared by all dashboard partials)."""
-    repos = await _build_repo_viewmodels()
+    repos = await _build_repo_viewmodels(include_checks, include_stale)
     return _sort_repos(repos, sort, direction)
 
 
 @router.get("/partials/dashboard-matrix", response_class=HTMLResponse)
 async def dashboard_matrix_partial(
-    request: Request, sort: str = "name", dir: str = "asc"
+    request: Request,
+    sort: str = "name",
+    dir: str = "asc",
+    include_checks: bool = True,
+    include_stale: bool = True,
 ) -> HTMLResponse:
     """Return the compact matrix view for HTMX swap."""
-    repos = await _build_sorted_repos(sort, dir)
+    repos = await _build_sorted_repos(sort, dir, include_checks, include_stale)
     return templates.TemplateResponse(
         request,
         "partials/dashboard_matrix.html",
@@ -743,6 +765,8 @@ async def dashboard_matrix_partial(
             "repos": repos,
             "sort": sort,
             "dir": dir,
+            "include_checks": include_checks,
+            "include_stale": include_stale,
             "staleness": _staleness_config,
             "time_ago": _time_ago,
         },
@@ -751,10 +775,14 @@ async def dashboard_matrix_partial(
 
 @router.get("/partials/dashboard-list", response_class=HTMLResponse)
 async def dashboard_list_partial(
-    request: Request, sort: str = "name", dir: str = "asc"
+    request: Request,
+    sort: str = "name",
+    dir: str = "asc",
+    include_checks: bool = True,
+    include_stale: bool = True,
 ) -> HTMLResponse:
     """Return the compact list view for HTMX swap."""
-    repos = await _build_sorted_repos(sort, dir)
+    repos = await _build_sorted_repos(sort, dir, include_checks, include_stale)
     return templates.TemplateResponse(
         request,
         "partials/dashboard_list.html",
@@ -763,6 +791,22 @@ async def dashboard_list_partial(
             "staleness": _staleness_config,
             "time_ago": _time_ago,
         },
+    )
+
+
+@router.get("/partials/dashboard-stats", response_class=HTMLResponse)
+async def dashboard_stats_partial(
+    request: Request,
+    include_checks: bool = True,
+    include_stale: bool = True,
+) -> HTMLResponse:
+    """Return the stats bar for HTMX swap, respecting the health-status toggle."""
+    repos = await _build_repo_viewmodels(include_checks, include_stale)
+    totals = _compute_totals(repos)
+    return templates.TemplateResponse(
+        request,
+        "partials/dashboard_stats.html",
+        context={"totals": totals},
     )
 
 

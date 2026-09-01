@@ -3,29 +3,30 @@
         <tr class="text-xs uppercase tracking-wider">
             {% set hx_base = "/partials/dashboard-matrix" %}
             {% set next_dir = "desc" if (dir == "asc") else "asc" %}
+            {% set health_qs = "&include_checks=" + ("true" if include_checks else "false") + "&include_stale=" + ("true" if include_stale else "false") %}
             <th class="cursor-pointer hover:text-primary text-center py-1 w-8"
-                hx-get="{{ hx_base }}?sort=health&dir={% if sort == 'health' %}{{ next_dir }}{% else %}desc{% endif %}"
+                hx-get="{{ hx_base }}?sort=health&dir={% if sort == 'health' %}{{ next_dir }}{% else %}desc{% endif %}{{ health_qs }}"
                 hx-target="#repo-grid" hx-swap="innerHTML"
                 title="Cumulative repository status based on CI, checks, and staleness">
                 Status {% if sort == 'health' %}{% if dir == 'asc' %}▲{% else %}▼{% endif %}{% endif %}
             </th>
             <th class="cursor-pointer hover:text-primary py-1"
-                hx-get="{{ hx_base }}?sort=name&dir={% if sort == 'name' %}{{ next_dir }}{% else %}asc{% endif %}"
+                hx-get="{{ hx_base }}?sort=name&dir={% if sort == 'name' %}{{ next_dir }}{% else %}asc{% endif %}{{ health_qs }}"
                 hx-target="#repo-grid" hx-swap="innerHTML">
                 Repository {% if sort == 'name' %}{% if dir == 'asc' %}▲{% else %}▼{% endif %}{% endif %}
             </th>
             <th class="cursor-pointer hover:text-primary text-right py-1"
-                hx-get="{{ hx_base }}?sort=issues&dir={% if sort == 'issues' %}{{ next_dir }}{% else %}desc{% endif %}"
+                hx-get="{{ hx_base }}?sort=issues&dir={% if sort == 'issues' %}{{ next_dir }}{% else %}desc{% endif %}{{ health_qs }}"
                 hx-target="#repo-grid" hx-swap="innerHTML">
                 Issues {% if sort == 'issues' %}{% if dir == 'asc' %}▲{% else %}▼{% endif %}{% endif %}
             </th>
             <th class="cursor-pointer hover:text-primary text-right py-1"
-                hx-get="{{ hx_base }}?sort=prs&dir={% if sort == 'prs' %}{{ next_dir }}{% else %}desc{% endif %}"
+                hx-get="{{ hx_base }}?sort=prs&dir={% if sort == 'prs' %}{{ next_dir }}{% else %}desc{% endif %}{{ health_qs }}"
                 hx-target="#repo-grid" hx-swap="innerHTML">
                 PRs {% if sort == 'prs' %}{% if dir == 'asc' %}▲{% else %}▼{% endif %}{% endif %}
             </th>
             <th class="cursor-pointer hover:text-primary text-right py-1"
-                hx-get="{{ hx_base }}?sort=branches&dir={% if sort == 'branches' %}{{ next_dir }}{% else %}desc{% endif %}"
+                hx-get="{{ hx_base }}?sort=branches&dir={% if sort == 'branches' %}{{ next_dir }}{% else %}desc{% endif %}{{ health_qs }}"
                 hx-target="#repo-grid" hx-swap="innerHTML">
                 Branches {% if sort == 'branches' %}{% if dir == 'asc' %}▲{% else %}▼{% endif %}{% endif %}
             </th>

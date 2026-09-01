@@ -242,6 +242,91 @@ class TestDashboardListPartial:
         assert "⚠" in resp.text
 
 
+class TestDashboardStatsPartial:
+    """Tests for GET /partials/dashboard-stats route."""
+
+    async def test_stats_returns_html(self, web_client: AsyncClient) -> None:
+        resp = await web_client.get("/partials/dashboard-stats")
+        assert resp.status_code == 200
+        assert 'id="stats-bar"' in resp.text
+        assert "Repositories" in resp.text
+
+    async def test_stats_include_stale_false_changes_health_breakdown(
+        self, web_client: AsyncClient
+    ) -> None:
+        # acme/api is 'warning' by default (stale issues/PRs only, no workflow/check failure).
+        # acme/frontend is 'error' (workflow failure), unaffected by the staleness toggle.
+        default_resp = await web_client.get("/partials/dashboard-stats")
+        assert "1 warning" in default_resp.text
+
+        off_resp = await web_client.get("/partials/dashboard-stats?include_stale=false")
+        assert "1 warning" not in off_resp.text
+        assert "1 healthy" in off_resp.text  # acme/api becomes healthy
+
+
+class TestDashboardHealthToggle:
+    """Tests for the include_checks/include_stale query params on dashboard routes."""
+
+    async def test_list_include_stale_false_removes_warning_border(
+        self, web_client: AsyncClient
+    ) -> None:
+        default_resp = await web_client.get("/partials/dashboard-list?sort=name&dir=asc")
+        assert "border-warning" in default_resp.text
+
+        off_resp = await web_client.get(
+            "/partials/dashboard-list?sort=name&dir=asc&include_stale=false"
+        )
+        assert "border-warning" not in off_resp.text
+        assert "border-error" in off_resp.text  # acme/frontend unaffected
+
+    async def test_matrix_include_stale_false_changes_status_icon(
+        self, web_client: AsyncClient
+    ) -> None:
+        resp = await web_client.get(
+            "/partials/dashboard-matrix?sort=name&dir=asc&include_stale=false"
+        )
+        assert "status-icon-pending" not in resp.text  # warning-triangle icon gone
+        assert "status-icon-failure" in resp.text  # acme/frontend still errors (workflow)
+
+    async def test_matrix_sort_headers_preserve_toggle_state(
+        self, web_client: AsyncClient
+    ) -> None:
+        resp = await web_client.get(
+            "/partials/dashboard-matrix?sort=name&dir=asc&include_checks=false&include_stale=false"
+        )
+        assert "include_checks=false" in resp.text
+        assert "include_stale=false" in resp.text
+
+    async def test_checks_toggle_does_not_affect_check_stat_totals(
+        self, web_client_with_checks: AsyncClient
+    ) -> None:
+        """The 'Checks' stat panel counts raw pass/fail, independent of the health toggle."""
+        default_resp = await web_client_with_checks.get("/partials/dashboard-stats")
+        off_resp = await web_client_with_checks.get(
+            "/partials/dashboard-stats?include_checks=false"
+        )
+        # "1 failing" coincidentally appears 3x (repos_error, workflow_failures, check_failures
+        # all == 1 in this fixture) — the count staying identical proves check_failures itself
+        # (not just repos_error) is unaffected by the toggle.
+        assert default_resp.text.count("1 failing") == off_resp.text.count("1 failing") == 3
+
+    async def test_full_dashboard_accepts_toggle_query_params(
+        self, web_client: AsyncClient
+    ) -> None:
+        resp = await web_client.get("/?include_checks=false&include_stale=false")
+        assert resp.status_code == 200
+
+    async def test_defaults_match_explicit_true(self, web_client: AsyncClient) -> None:
+        """Omitting the query params entirely behaves like include_checks=true&include_stale=true."""
+        default_resp = await web_client.get("/partials/dashboard-list?sort=name&dir=asc")
+        explicit_resp = await web_client.get(
+            "/partials/dashboard-list?sort=name&dir=asc&include_checks=true&include_stale=true"
+        )
+        for text in (default_resp.text, explicit_resp.text):
+            assert "border-warning" in text
+            assert "border-error" in text
+
+
 class TestActionRunPartial:
     """Tests for GET /partials/action-run/{run_id} route."""
 

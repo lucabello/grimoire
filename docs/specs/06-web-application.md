@@ -132,6 +132,8 @@ The dashboard supports three view modes, selectable via a button group next to t
 
 All three views accept the same `sort` and `dir` query parameters. The table view additionally supports clickable column headers for sorting (HTMX `hx-get` on `<th>` elements).
 
+**Health status display toggle:** A ⚙ gear-icon dropdown sits next to the view switcher with two checkboxes — "Check results" and "Stale issues/PRs" — controlling whether each contributes to the computed `health_status` (see below). Both default on. Workflow failures always count and are not toggleable. State is persisted per-browser in `localStorage` (`grimoire-health-include-checks`, `grimoire-health-include-stale`); toggling re-fetches both `#repo-grid` and the stats bar (`#stats-bar`, via `GET /partials/dashboard-stats`) so the accent colors, status icons, and the "Repositories" stat panel's failing/warning/healthy breakdown stay consistent. The underlying issue/PR/check/workflow counts themselves are unaffected — only the derived health status.
+
 **Staleness highlighting:** Stale issue/PR counts are highlighted in yellow only when the stale percentage (stale/open) meets or exceeds the configured thresholds (`staleness.problematic_stale_issues_pct`, `staleness.problematic_stale_prs_pct`). Below the threshold, stale counts render without warning color.
 
 ### Health Status & Accent Colors
@@ -145,6 +147,8 @@ Every repo has a computed `health_status` that drives a left-border accent color
 | **OK** | None (no border) | All workflows and checks pass, no staleness |
 
 Error takes priority over warning. The `severity` field on check definitions (`"error"` or `"warning"`, default `"error"`) controls whether a failing check affects health. Only `"error"`-severity failures contribute to the error tier; `"warning"`-severity failures are reported but do not influence repo health. See Module 4 for details.
+
+Check-result and staleness contributions can each be individually excluded from this computation via the health status display toggle described above (default: both included). Workflow failures always count toward the error tier regardless of toggle state.
 
 **Per-repo warnings:** If a repo has warnings (e.g., "Data is 2h stale"), show an amber ⚠ icon in the row. Hover/click reveals the warning text.
 
@@ -469,6 +473,7 @@ These endpoints return HTML fragments (not full pages) for HTMX to swap in:
 | `GET /partials/dashboard-cards?sort=...&dir=...` | Grid view: card layout |
 | `GET /partials/dashboard-list?sort=...&dir=...` | List view: compact rows |
 | `GET /partials/dashboard-table?sort=...&dir=...` | Table view: data table |
+| `GET /partials/dashboard-stats?include_checks=...&include_stale=...` | Stats bar, respecting the health status display toggle |
 | `GET /partials/action-run/{run_id}` | Expanded action run details |
 | `GET /partials/action-results/{slug}?sort=...&dir=...` | Per-action results grouped by run (collapsible) |
 | `GET /partials/action-output/{result_id}` | Expanded action output text |

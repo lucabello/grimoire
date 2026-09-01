@@ -1,0 +1,62 @@
+<div id="stats-bar" class="stats stats-vertical sm:stats-horizontal shadow bg-base-100 w-full mb-6">
+    <div class="stat">
+        <div class="stat-figure text-primary">
+            <svg xmlns="http://www.w3.org/2000/svg" class="w-6 h-6" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M3 7v10a2 2 0 002 2h14a2 2 0 002-2V9a2 2 0 00-2-2h-6l-2-2H5a2 2 0 00-2 2z" /></svg>
+        </div>
+        <div class="stat-title">Repositories</div>
+        <div class="stat-value text-primary font-mono-nums">{{ totals.repos }}</div>
+        <div class="stat-desc text-sm">
+            {%- if totals.repos_error %}<span class="text-error">{{ totals.repos_error }} failing</span>{% endif -%}
+            {%- if totals.repos_error and totals.repos_warning %} · {% endif -%}
+            {%- if totals.repos_warning %}<span class="text-warning">{{ totals.repos_warning }} warning</span>{% endif -%}
+            {%- if (totals.repos_error or totals.repos_warning) and totals.repos_ok %} · {% endif -%}
+            {%- if totals.repos_ok %}<span class="text-success">{{ totals.repos_ok }} healthy</span>{% endif -%}
+        </div>
+    </div>
+    <div class="stat">
+        <div class="stat-figure text-info">
+            <svg xmlns="http://www.w3.org/2000/svg" class="w-6 h-6" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 8v4m0 4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z" /></svg>
+        </div>
+        <div class="stat-title">Open Issues</div>
+        <div class="stat-value text-info font-mono-nums">{{ totals.open_issues }}</div>
+        {% if totals.stale_issues %}<div class="stat-desc text-sm"><span class="text-warning">{{ totals.stale_issues }} stale</span></div>{% endif %}
+    </div>
+    <div class="stat">
+        <div class="stat-figure text-info">
+            <svg xmlns="http://www.w3.org/2000/svg" class="w-6 h-6" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15" /></svg>
+        </div>
+        <div class="stat-title">Open PRs</div>
+        <div class="stat-value text-info font-mono-nums">{{ totals.open_prs }}</div>
+        {% if totals.stale_prs %}<div class="stat-desc text-sm"><span class="text-warning">{{ totals.stale_prs }} stale</span></div>{% endif %}
+    </div>
+    <div class="stat">
+        <div class="stat-figure text-accent">
+            <svg xmlns="http://www.w3.org/2000/svg" class="w-6 h-6" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 12l2 2 4-4m6 2a9 9 0 11-18 0 9 9 0 0118 0z" /></svg>
+        </div>
+        <div class="stat-title">Workflows</div>
+        <div class="stat-value text-accent font-mono-nums">{{ totals.total_workflows }}</div>
+        <div class="stat-desc text-sm">
+            {%- set wf_passing = totals.total_workflows - totals.workflow_failures -%}
+            {%- if totals.workflow_failures %}<span class="text-error">{{ totals.workflow_failures }} failing</span>{% endif -%}
+            {%- if totals.workflow_failures and wf_passing %} · {% endif -%}
+            {%- if wf_passing %}<span class="text-success">{{ wf_passing }} passing</span>{% endif -%}
+        </div>
+    </div>
+    {% if totals.total_checks %}
+    <div class="stat">
+        <div class="stat-figure text-accent">
+            <svg xmlns="http://www.w3.org/2000/svg" class="w-6 h-6" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 5H7a2 2 0 00-2 2v12a2 2 0 002 2h10a2 2 0 002-2V7a2 2 0 00-2-2h-2M9 5a2 2 0 002 2h2a2 2 0 002-2M9 5a2 2 0 012-2h2a2 2 0 012 2m-6 9l2 2 4-4" /></svg>
+        </div>
+        <div class="stat-title">Checks</div>
+        <div class="stat-value text-accent font-mono-nums">{{ totals.total_checks }}</div>
+        <div class="stat-desc text-sm">
+            {%- set checks_passed = totals.total_checks - totals.check_failures - totals.check_warnings -%}
+            {%- if totals.check_failures %}<span class="text-error">{{ totals.check_failures }} failing</span>{% endif -%}
+            {%- if totals.check_failures and totals.check_warnings %} · {% endif -%}
+            {%- if totals.check_warnings %}<span class="text-warning">{{ totals.check_warnings }} warning</span>{% endif -%}
+            {%- if (totals.check_failures or totals.check_warnings) and checks_passed %} · {% endif -%}
+            {%- if checks_passed %}<span class="text-success">{{ checks_passed }} passed</span>{% endif -%}
+        </div>
+    </div>
+    {% endif %}
+</div>
