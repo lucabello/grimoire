@@ -48,6 +48,14 @@ def create_app() -> FastAPI:
     return app
 ```
 
+### URL prefix (root_path)
+
+The app may be served under a path prefix (ASGI `root_path`, e.g. behind an ingress). Templates must never hard-code absolute URLs:
+
+- Jinja: a context processor on `templates` injects `base_path` (`root_path` without trailing slash). Write `href="{{ base_path }}/repo/..."`, `hx-get="{{ base_path }}/partials/..."`.
+- JavaScript: `base.html` defines `const BASE_PATH = {{ base_path | tojson }};` — build URLs as `BASE_PATH + '/partials/...'`.
+- Server redirects (e.g. `HX-Redirect`) use `_base_path(request)`.
+
 ## 6.2 — Loading Page
 
 **Route:** `GET /` (when cache is empty and a refresh is running)

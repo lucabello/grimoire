@@ -1,6 +1,6 @@
 {# Per-action results grouped by run (for HTMX inline expansion) #}
 {% if runs %}
-{% set hx_base = "/partials/action-results/" ~ slug %}
+{% set hx_base = base_path ~ "/partials/action-results/" ~ slug %}
 {% set next_dir = "desc" if (dir == "asc") else "asc" %}
 <div class="flex flex-col gap-2">
     {% for run in runs %}
@@ -34,7 +34,7 @@
                         {% if r.repo_full_name == "(global)" %}
                         <span class="text-sm opacity-40">None</span>
                         {% else %}
-                        <a href="/repo/{{ r.repo_full_name }}" class="link link-hover text-sm">{{ r.repo_full_name }}</a>
+                        <a href="{{ base_path }}/repo/{{ r.repo_full_name }}" class="link link-hover text-sm">{{ r.repo_full_name }}</a>
                         {% endif %}
                     </td>
                     <td class="font-mono text-xs">{{ r.branch }}</td>
@@ -47,7 +47,7 @@
                     </td>
                     <td>
                         <button class="btn btn-ghost btn-xs"
-                                hx-get="/partials/action-output/{{ r.id }}"
+                                hx-get="{{ base_path }}/partials/action-output/{{ r.id }}"
                                 hx-target="#inline-action-output-{{ r.id }}"
                                 hx-swap="innerHTML"
                                 hx-on::before-request="var t = document.getElementById('inline-action-output-{{ r.id }}'); if(t.innerHTML.trim()) { t.innerHTML = ''; event.preventDefault(); }">

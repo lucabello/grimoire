@@ -1,7 +1,7 @@
 <table class="table table-xs w-full">
     <thead>
         <tr class="text-xs uppercase tracking-wider">
-            {% set hx_base = "/partials/dashboard-matrix" %}
+            {% set hx_base = base_path ~ "/partials/dashboard-matrix" %}
             {% set next_dir = "desc" if (dir == "asc") else "asc" %}
             {% set health_qs = "&include_checks=" + ("true" if include_checks else "false") + "&include_stale=" + ("true" if include_stale else "false") %}
             <th class="cursor-pointer hover:text-primary text-center py-1 w-8"
@@ -50,7 +50,7 @@
 
             {# ── Repository Name ── #}
             <td class="py-0.5">
-                <a href="/repo/{{ repo.full_name }}" class="link link-hover text-sm"
+                <a href="{{ base_path }}/repo/{{ repo.full_name }}" class="link link-hover text-sm"
                    title="{{ repo.full_name }}">{{ repo.full_name }}</a>
             </td>
 

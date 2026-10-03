@@ -6,7 +6,7 @@
 {# ── Breadcrumb ────────────────────────────────────────────────────── #}
 <div class="breadcrumbs text-sm mb-4">
     <ul>
-        <li><a href="/">Dashboard</a></li>
+        <li><a href="{{ base_path }}/">Dashboard</a></li>
         <li>{{ repo_name }}</li>
     </ul>
 </div>
@@ -226,7 +226,7 @@
                     {% endif %}
                     {% for chk in checks %}
                     <div class="flex items-center gap-2 py-0.5">
-                        <a href="/checks?expand={{ chk.check_slug }}{% if chk.id %}&result={{ chk.id }}{% endif %}#check-card-{{ chk.check_slug }}" class="flex items-center gap-2 hover:opacity-80">
+                        <a href="{{ base_path }}/checks?expand={{ chk.check_slug }}{% if chk.id %}&result={{ chk.id }}{% endif %}#check-card-{{ chk.check_slug }}" class="flex items-center gap-2 hover:opacity-80">
                         {% if chk.status == "pass" %}<i class="fa-solid fa-check status-icon status-icon-pass"></i>
                         {% elif chk.status == "fail" and chk.severity == "warning" %}<i class="fa-solid fa-triangle-exclamation status-icon status-icon-pending"></i>
                         {% elif chk.status == "fail" %}<i class="fa-solid fa-xmark status-icon status-icon-fail"></i>
@@ -236,7 +236,7 @@
                         <span class="text-xs opacity-40">{{ chk.status }}</span>
                         {% if chk.id %}
                         <button class="btn btn-ghost btn-xs ml-auto"
-                                hx-get="/partials/check-output/{{ chk.id }}"
+                                hx-get="{{ base_path }}/partials/check-output/{{ chk.id }}"
                                 hx-target="#check-output-{{ chk.id }}"
                                 hx-swap="innerHTML"
                                 hx-on::before-request="var t = document.getElementById('check-output-{{ chk.id }}'); if(t.innerHTML.trim()) { t.innerHTML = ''; event.preventDefault(); }">

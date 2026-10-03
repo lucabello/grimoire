@@ -84,6 +84,38 @@ server {
 }
 ```
 
+### Serving under a path prefix (ingress)
+
+To expose Grimoire at a sub-path such as `https://example.com/grimoire/`, start it with `--root-path`:
+
+```bash
+grimoire --root-path /grimoire
+# or, when invoking uvicorn directly (e.g. in the Docker image):
+uvicorn grimoire.app:create_app --factory --host 0.0.0.0 --port 8000 --root-path /grimoire
+```
+
+All links, HTMX requests and static assets are then generated under `/grimoire`. The ingress may either strip the prefix before forwarding or forward the path unchanged — both work. For example, a Kubernetes ingress without rewriting:
+
+```yaml
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: grimoire
+spec:
+  rules:
+    - http:
+        paths:
+          - path: /grimoire
+            pathType: Prefix
+            backend:
+              service:
+                name: grimoire
+                port:
+                  number: 8000
+```
+
+Health and metrics endpoints are served under the prefix too (e.g. `/grimoire/health`); probes that hit the pod directly can keep using `/health`.
+
 ## Health checks
 
 Grimoire exposes a health endpoint at `GET /health`. The Docker image includes a built-in `HEALTHCHECK` that polls this endpoint every 30 seconds.

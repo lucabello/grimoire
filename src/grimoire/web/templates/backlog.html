@@ -41,7 +41,7 @@
                 </label>
                 <ul tabindex="0" class="dropdown-content z-[1] menu p-2 shadow bg-base-100 rounded-box w-56">
                     <li><a id="export-md" href="#">Copy as Markdown</a></li>
-                    <li><a id="export-download" href="/api/backlog/export" target="_blank">Download .md file</a></li>
+                    <li><a id="export-download" href="{{ base_path }}/api/backlog/export" target="_blank">Download .md file</a></li>
                 </ul>
             </div>
             <button class="btn btn-sm btn-ghost" onclick="document.getElementById('filters-panel').classList.toggle('hidden')">
@@ -267,7 +267,7 @@
         document.querySelectorAll('.weight-slider').forEach(s => {
             params.set('w_' + s.dataset.key, s.value);
         });
-        const url = '/partials/backlog-items?' + params.toString();
+        const url = BASE_PATH + '/partials/backlog-items?' + params.toString();
         htmx.ajax('GET', url, {target: '#backlog-items', swap: 'innerHTML'});
     }
 
@@ -304,7 +304,7 @@
             weights[s.dataset.key] = parseFloat(s.value);
         });
         try {
-            const resp = await fetch('/api/backlog/save-weights', {
+            const resp = await fetch(BASE_PATH + '/api/backlog/save-weights', {
                 method: 'POST',
                 headers: {'Content-Type': 'application/json'},
                 body: JSON.stringify({category_weights: weights})
@@ -324,7 +324,7 @@
     document.getElementById('export-md').addEventListener('click', async function(e) {
         e.preventDefault();
         try {
-            const resp = await fetch('/api/backlog/export');
+            const resp = await fetch(BASE_PATH + '/api/backlog/export');
             const text = await resp.text();
             await navigator.clipboard.writeText(text);
             showToast('Backlog copied to clipboard', 'success');

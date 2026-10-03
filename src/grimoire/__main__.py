@@ -17,9 +17,17 @@ def _parse_args(argv: list[str] | None) -> argparse.Namespace:
     parser.add_argument(
         "--host", default="0.0.0.0", help="interface to bind to (default: 0.0.0.0)"
     )
+    parser.add_argument(
+        "--root-path",
+        default="",
+        help="URL prefix when served behind a proxy/ingress, e.g. /grimoire (default: none)",
+    )
     args = parser.parse_args(argv)
     if args.config_file is not None and not args.config_file.is_file():
         parser.error(f"config file not found: {args.config_file}")
+    args.root_path = args.root_path.strip("/")
+    if args.root_path:
+        args.root_path = f"/{args.root_path}"
     return args
 
 
@@ -37,6 +45,7 @@ def main(argv: list[str] | None = None) -> None:
         factory=True,
         host=args.host,
         port=args.port,
+        root_path=args.root_path,
         loop="asyncio",
     )
 

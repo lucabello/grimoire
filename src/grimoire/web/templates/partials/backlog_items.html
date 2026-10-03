@@ -22,7 +22,7 @@
 
         {% if show_repo %}
         {# Repo name #}
-        <a href="/repo/{{ item.repo_full_name }}" class="text-sm font-semibold hover:text-primary whitespace-nowrap">
+        <a href="{{ base_path }}/repo/{{ item.repo_full_name }}" class="text-sm font-semibold hover:text-primary whitespace-nowrap">
             {{ item.repo_full_name }}
         </a>
         {% endif %}
@@ -69,7 +69,7 @@
                 <i class="{{ group.tier_icon }} text-xs"></i>
                 <span class="font-mono-nums text-sm font-semibold">{{ '%.0f' | format(group.total_score) }}</span>
             </div>
-            <a href="/repo/{{ group.repo_full_name }}" class="font-semibold hover:text-primary" onclick="event.stopPropagation()">
+            <a href="{{ base_path }}/repo/{{ group.repo_full_name }}" class="font-semibold hover:text-primary" onclick="event.stopPropagation()">
                 {{ group.repo_full_name }}
             </a>
             <span class="text-xs opacity-50">

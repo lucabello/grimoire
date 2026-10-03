@@ -145,6 +145,16 @@ async def web_client() -> AsyncIterator[AsyncClient]:
 
 
 @pytest.fixture
+async def web_client_with_root_path() -> AsyncIterator[AsyncClient]:
+    """Client for an app served under the ``/grimoire`` prefix (e.g. behind an ingress)."""
+    _populate_cache()
+    app = create_app()
+    transport = ASGITransport(app=app, root_path="/grimoire")
+    async with AsyncClient(transport=transport, base_url="http://test") as client:
+        yield client
+
+
+@pytest.fixture
 async def web_client_with_checks(tmp_path: object) -> AsyncIterator[AsyncClient]:
     """Provide an async HTTP client with check definitions and DB results."""
     import grimoire.checks.router as checks_router

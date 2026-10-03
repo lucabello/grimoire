@@ -2,10 +2,11 @@
 <html lang="en">
 <head>
     <script>document.documentElement.setAttribute('data-theme', localStorage.getItem('grimoire-theme') || 'dark');</script>
+    <script>const BASE_PATH = {{ base_path | tojson }};</script>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>{% block title %}Grimoire{% endblock %}</title>
-    <link rel="icon" href="/static/favicon.ico">
+    <link rel="icon" href="{{ base_path }}/static/favicon.ico">
     <link href="https://cdn.jsdelivr.net/npm/daisyui@4.12.14/dist/full.min.css" rel="stylesheet" />
     <link href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.2/css/all.min.css" rel="stylesheet" />
     <script src="https://cdn.tailwindcss.com"></script>
@@ -49,17 +50,17 @@
     <!-- Navbar -->
     <div class="navbar bg-base-100 shadow-lg border-b border-primary/20">
         <div class="flex-1">
-            <a href="/" class="btn btn-ghost text-xl gap-2">
-                <img src="/static/logo-nav.png" alt="Grimoire" class="h-10">
+            <a href="{{ base_path }}/" class="btn btn-ghost text-xl gap-2">
+                <img src="{{ base_path }}/static/logo-nav.png" alt="Grimoire" class="h-10">
                 <span class="font-bold bg-gradient-to-r from-primary to-secondary bg-clip-text text-transparent">Grimoire</span>
             </a>
         </div>
         <div class="flex-none gap-2">
             <ul class="menu menu-horizontal px-1">
-                <li><a href="/" class="{% block nav_dashboard %}{% endblock %}">Dashboard</a></li>
-                <li><a href="/backlog" class="{% block nav_backlog %}{% endblock %}">Backlog</a></li>
-                <li><a href="/checks" class="{% block nav_checks %}{% endblock %}">Checks</a></li>
-                <li><a href="/actions" class="{% block nav_actions %}{% endblock %}">Actions</a></li>
+                <li><a href="{{ base_path }}/" class="{% block nav_dashboard %}{% endblock %}">Dashboard</a></li>
+                <li><a href="{{ base_path }}/backlog" class="{% block nav_backlog %}{% endblock %}">Backlog</a></li>
+                <li><a href="{{ base_path }}/checks" class="{% block nav_checks %}{% endblock %}">Checks</a></li>
+                <li><a href="{{ base_path }}/actions" class="{% block nav_actions %}{% endblock %}">Actions</a></li>
             </ul>
             <!-- Theme toggle -->
             <label class="swap swap-rotate btn btn-ghost btn-circle btn-sm">

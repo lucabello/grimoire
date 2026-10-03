@@ -2,7 +2,7 @@
    Only polls when running (every 2s). Idle state is static. #}
 {% if running %}
 <div id="refresh-btn"
-     hx-get="/partials/refresh-status?was_running=1"
+     hx-get="{{ base_path }}/partials/refresh-status?was_running=1"
      hx-trigger="every 2s"
      hx-swap="outerHTML">
     <button class="btn btn-primary btn-sm gap-2" disabled>
@@ -16,7 +16,7 @@
 {% else %}
 <div id="refresh-btn">
     <button class="btn btn-primary btn-sm gap-2"
-            hx-post="/partials/refresh-trigger"
+            hx-post="{{ base_path }}/partials/refresh-trigger"
             hx-target="#refresh-btn"
             hx-swap="outerHTML"
             hx-on::after-request="if(event.detail.successful) { showToast('Refresh started', 'success'); } else { showToast('Refresh failed', 'error'); }">
