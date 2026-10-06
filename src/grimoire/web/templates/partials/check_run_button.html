@@ -2,7 +2,7 @@
    Only polls when running (every 2s). Idle state is static. #}
 {% if running %}
 <div id="check-run-btn-{{ slug }}"
-     hx-get="/partials/check-run-status/{{ slug }}?was_running=1"
+     hx-get="{{ base_path }}/partials/check-run-status/{{ slug }}?was_running=1"
      hx-trigger="every 2s"
      hx-swap="outerHTML">
     <button class="btn btn-primary btn-sm gap-1" disabled>
@@ -16,7 +16,7 @@
 {% else %}
 <div id="check-run-btn-{{ slug }}">
     <button class="btn btn-primary btn-sm gap-1"
-            hx-post="/partials/check-run/{{ slug }}"
+            hx-post="{{ base_path }}/partials/check-run/{{ slug }}"
             hx-target="#check-run-btn-{{ slug }}"
             hx-swap="outerHTML"
             hx-on::after-request="if(!event.detail.successful) { showToast(event.detail.xhr?.status === 409 ? 'Check is already running' : 'Failed to trigger check', 'error'); }">

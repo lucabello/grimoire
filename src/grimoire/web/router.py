@@ -30,7 +30,16 @@ from grimoire.web.backlog import (
 
 router = APIRouter(tags=["web"])
 
-templates = Jinja2Templates(directory=str(Path(__file__).parent / "templates"))
+
+def _base_path(request: Request) -> str:
+    """URL prefix the app is served under (ASGI ``root_path``), without trailing slash."""
+    return str(request.scope.get("root_path", "")).rstrip("/")
+
+
+templates = Jinja2Templates(
+    directory=str(Path(__file__).parent / "templates"),
+    context_processors=[lambda request: {"base_path": _base_path(request)}],
+)
 templates.env.globals["VERSION"] = version("grimoire-dashboard")
 
 # Module-level staleness config — set from app lifespan
@@ -1151,7 +1160,7 @@ async def loading_status_partial(request: Request) -> HTMLResponse:
 
     if not running:
         resp = HTMLResponse("")
-        resp.headers["HX-Redirect"] = "/"
+        resp.headers["HX-Redirect"] = f"{_base_path(request)}/"
         return resp
 
     return templates.TemplateResponse(

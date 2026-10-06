@@ -56,7 +56,7 @@
                     </span>
                     {% if chk.schedule %}
                     <button class="btn btn-sm {% if chk.enabled %}btn-outline btn-warning{% else %}btn-outline btn-success{% endif %} gap-1"
-                            hx-post="/api/checks/{{ chk.slug }}/toggle"
+                            hx-post="{{ base_path }}/api/checks/{{ chk.slug }}/toggle"
                             hx-swap="none"
                             hx-on::after-request="if(event.detail.successful) { location.reload(); } else { showToast('Toggle failed', 'error'); }">
                         {% if chk.enabled %}
@@ -66,7 +66,7 @@
                         {% endif %}
                     </button>
                     {% endif %}
-                    <div hx-get="/partials/check-run-status/{{ chk.slug }}"
+                    <div hx-get="{{ base_path }}/partials/check-run-status/{{ chk.slug }}"
                          hx-trigger="load"
                          hx-swap="outerHTML">
                         <button class="btn btn-primary btn-sm gap-1" disabled>
@@ -86,7 +86,7 @@
                 {# Results toggle #}
                 {% if chk.pass_count or chk.fail_count or chk.warn_count %}
                 <button class="btn btn-ghost btn-xs opacity-60"
-                        hx-get="/partials/check-results/{{ chk.slug }}"
+                        hx-get="{{ base_path }}/partials/check-results/{{ chk.slug }}"
                         hx-target="#check-results-{{ chk.slug }}"
                         hx-swap="innerHTML"
                         hx-on::before-request="var t = document.getElementById('check-results-{{ chk.slug }}'); if(t.innerHTML.trim()) { t.innerHTML = ''; event.preventDefault(); }">
@@ -143,14 +143,14 @@ document.addEventListener('DOMContentLoaded', function() {
     // Auto-load results via HTMX
     const target = document.getElementById('check-results-' + expandSlug);
     if (target) {
-        htmx.ajax('GET', '/partials/check-results/' + expandSlug, target).then(function() {
+        htmx.ajax('GET', BASE_PATH + '/partials/check-results/' + expandSlug, target).then(function() {
             // Open the first run's details to show results
             var firstDetails = target.querySelector('details');
             if (firstDetails) firstDetails.open = true;
             // After results load, auto-expand the specific result's output
             if (resultId) {
                 setTimeout(function() {
-                    var outputBtn = target.querySelector('button[hx-get="/partials/check-output/' + resultId + '"]');
+                    var outputBtn = target.querySelector('button[hx-get="' + BASE_PATH + '/partials/check-output/' + resultId + '"]');
                     if (outputBtn) outputBtn.click();
                 }, 200);
             }

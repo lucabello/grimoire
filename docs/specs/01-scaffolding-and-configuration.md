@@ -231,6 +231,7 @@ async def get_session(engine: AsyncEngine) -> AsyncSession: ...
   - Keep existing `check`, `format`, `lint`, `test` recipes.
   - Add `docker-build` and `docker-run` recipes.
 - Create a minimal `src/grimoire/app.py` with `create_app() -> FastAPI` that returns a FastAPI instance (routes added in later modules).
+- CLI entrypoint `grimoire` (`src/grimoire/__main__.py`): `grimoire [--config-file PATH] [--port 8000] [--host 0.0.0.0] [--root-path /prefix]`. `--config-file` must exist and is exported as `GRIMOIRE_CONFIG` before starting uvicorn with the app factory. `--root-path` is normalised to `/prefix` (no trailing slash) and passed to uvicorn as the ASGI `root_path`.
 
 ## Acceptance Criteria
 

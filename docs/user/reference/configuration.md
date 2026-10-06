@@ -8,10 +8,18 @@ All string values support environment variable references with the syntax `"${EN
 
 Grimoire looks for its configuration in this order:
 
-1. Explicit path passed at startup
+1. `--config-file` passed to the `grimoire` command
 2. `GRIMOIRE_CONFIG` environment variable
 3. `./config.yaml` in the working directory
 4. `~/.config/grimoire/config.yaml` (XDG config path)
+
+To run several instances side by side, give each its own config file and port:
+
+```bash
+uv run grimoire --config-file config.mlops.yaml --port 8001
+```
+
+`grimoire --help` lists all options (`--config-file`, `--port`, `--host`).
 
 ---
 

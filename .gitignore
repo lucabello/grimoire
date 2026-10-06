@@ -1,7 +1,10 @@
 # Grimoire-specific files
 config.yaml
 grimoire.db
+grimoire-*.db
+grimoire-*.log
 /workspace/
+/workspace-*/
 
 
 # Python

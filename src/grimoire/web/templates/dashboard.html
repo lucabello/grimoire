@@ -106,10 +106,10 @@
 
 <script>
     const VIEW_PARTIALS = {
-        matrix: '/partials/dashboard-matrix',
-        list:   '/partials/dashboard-list',
+        matrix: BASE_PATH + '/partials/dashboard-matrix',
+        list:   BASE_PATH + '/partials/dashboard-list',
     };
-    const STATS_PARTIAL = '/partials/dashboard-stats';
+    const STATS_PARTIAL = BASE_PATH + '/partials/dashboard-stats';
 
     let currentView = localStorage.getItem('grimoire-view') || 'matrix';
     // Migrate legacy view preferences to valid options
