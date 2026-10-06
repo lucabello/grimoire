@@ -5,9 +5,8 @@
 
         {# ── Header Row: name, issues, PRs, last activity, link ── #}
         <div class="flex items-center gap-4 flex-wrap">
-            <a href="{{ base_path }}/repo/{{ repo.full_name }}" class="link link-hover text-base font-semibold min-w-[200px]">
-                <span class="opacity-60">{{ repo.owner }}/</span>{{ repo.name }}
-            </a>
+            <a href="{{ base_path }}/repo/{{ repo.full_name }}" class="link link-hover text-base font-semibold min-w-[200px]"
+               title="{{ repo.full_name }}">{{ repo.name }}</a>
 
             <div class="flex flex-wrap gap-x-1 gap-y-1 text-sm font-mono-nums flex-1">
                 <span class="opacity-70">

@@ -127,3 +127,8 @@
     <p>No items match the current filters.</p>
 </div>
 {% endif %}
+
+{# Keep the page header summary in sync with the filtered item set #}
+<p id="backlog-summary" class="text-sm opacity-60" hx-swap-oob="true">
+    {% include "partials/backlog_summary.html" %}
+</p>

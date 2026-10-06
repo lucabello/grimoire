@@ -54,7 +54,12 @@ from grimoire.observability.logging import setup_logging
 from grimoire.observability.metrics import DATA_REFRESH_DURATION, update_repo_metrics
 from grimoire.observability.metrics import router as metrics_router
 from grimoire.web.router import router as web_router
-from grimoire.web.router import set_backlog_config, set_refresh_schedule, set_staleness_config
+from grimoire.web.router import (
+    set_backlog_config,
+    set_configured_teams,
+    set_refresh_schedule,
+    set_staleness_config,
+)
 from grimoire.workspace.manager import WorkspaceManager
 
 logger = logging.getLogger(__name__)
@@ -107,6 +112,11 @@ async def lifespan(_app: FastAPI) -> AsyncIterator[None]:
 
     # Expose refresh schedule to web layer
     set_refresh_schedule(config.refresh_schedule)
+
+    # Expose configured team sources for the dashboard filter dropdown
+    from grimoire.config import TeamRepoSource
+
+    set_configured_teams([s.team for s in config.repositories if isinstance(s, TeamRepoSource)])
 
     # Prune DB-cached repos that are no longer in the config
     await prune_removed_repos(engine, config)

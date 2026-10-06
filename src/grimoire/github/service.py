@@ -140,13 +140,16 @@ async def _resolve_static(
         if source.repo in seen:
             existing = seen[source.repo]
             merged = list(dict.fromkeys(existing.branches + branches))
-            seen[source.repo] = existing.model_copy(update={"branches": merged})
+            merged_sources = list(dict.fromkeys([*existing.sources, "static"]))
+            seen[source.repo] = existing.model_copy(
+                update={"branches": merged, "sources": merged_sources}
+            )
         else:
             seen[source.repo] = TrackedRepository(
                 full_name=source.repo,
                 default_branch=default_branch,
                 branches=branches,
-                source="static",
+                sources=["static"],
                 workflow_include=source.workflows.include,
                 workflow_exclude=source.workflows.exclude,
             )
@@ -188,13 +191,16 @@ async def _resolve_team(
         if full_name in seen:
             existing = seen[full_name]
             merged = list(dict.fromkeys(existing.branches + branches))
-            seen[full_name] = existing.model_copy(update={"branches": merged})
+            merged_sources = list(dict.fromkeys([*existing.sources, source_label]))
+            seen[full_name] = existing.model_copy(
+                update={"branches": merged, "sources": merged_sources}
+            )
         else:
             seen[full_name] = TrackedRepository(
                 full_name=full_name,
                 default_branch=default_branch,
                 branches=branches,
-                source=source_label,
+                sources=[source_label],
                 workflow_include=source.workflows.include,
                 workflow_exclude=source.workflows.exclude,
             )
@@ -601,7 +607,7 @@ async def save_stats_to_db(
                 CachedRepository(
                     full_name=stats.full_name,
                     default_branch=stats.default_branch,
-                    source=repo.source,
+                    sources_json=json.dumps(repo.sources),
                     branches_json=json.dumps(repo.branches),
                     open_issues=stats.open_issues,
                     stale_issues=stats.stale_issues,
@@ -674,11 +680,12 @@ async def load_stats_from_db(
 
         for cr in cached_repos:
             branches = json.loads(cr.branches_json) if cr.branches_json else []
+            sources = json.loads(cr.sources_json) if cr.sources_json else ["static"]
             repo = TrackedRepository(
                 full_name=cr.full_name,
                 default_branch=cr.default_branch,
                 branches=branches,
-                source=cr.source,
+                sources=sources,
                 workflow_include=json.loads(cr.workflow_include_json)
                 if cr.workflow_include_json
                 else [],
