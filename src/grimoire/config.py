@@ -157,6 +157,32 @@ class BacklogConfig(BaseModel):
     repository_weights: list[RepositoryWeightRule] = Field(default_factory=list)
 
 
+class WorkflowGroup(BaseModel):
+    """A named dashboard column holding workflows whose name matches any glob pattern."""
+
+    name: str
+    match: list[str] = Field(min_length=1)
+
+
+class DashboardConfig(BaseModel):
+    """Dashboard presentation options.
+
+    With no ``workflow_groups`` all workflows share a single "Workflows" column.
+    Otherwise each group becomes a column (first matching group wins) and
+    unmatched workflows go to a trailing "Other" column unless ``show_other`` is false.
+    """
+
+    workflow_groups: list[WorkflowGroup] = Field(default_factory=list)
+    show_other: bool = True
+
+    @model_validator(mode="after")
+    def unique_group_names(self) -> Self:
+        names = [group.name for group in self.workflow_groups]
+        if len(names) != len(set(names)):
+            raise ValueError("Workflow group names must be unique")
+        return self
+
+
 def _default_data_dir() -> Path:
     return _get_data_manager().data_dir / "data"
 
@@ -183,6 +209,7 @@ class GrimoireConfig(BaseModel):
 
     staleness: StalenessConfig = Field(default_factory=StalenessConfig)
     backlog: BacklogConfig = Field(default_factory=BacklogConfig)
+    dashboard: DashboardConfig = Field(default_factory=DashboardConfig)
     refresh_schedule: str = "*/5 * * * *"
 
     data_dir: Path = Field(default_factory=_default_data_dir)

@@ -181,6 +181,15 @@ Each icon represents one workflow. Hover shows the workflow name. Click links to
 
 When a repo has a single observed branch, omit the branch label for compactness.
 
+### Workflow groups (columns)
+
+`dashboard.workflow_groups` (spec 1.2) splits workflows into named columns. The grouping is computed at render time by `group_workflows()` in `web/router.py` (no data model or DB change); `RepoViewModel.workflow_columns` holds one `WorkflowColumn` per column.
+
+- No groups configured: a single "Workflows" column (default behaviour).
+- Groups configured: one column per group, in config order, plus a trailing "Other" column unless `show_other` is false (then unmatched workflows are hidden). The first group whose glob matches the workflow name wins.
+- Matrix view: one `<th>`/`<td>` per column; every column is always rendered so cells align across repos.
+- List view and repo detail page: one labelled workflow block per non-empty column (the label is omitted on the repo page when there is a single column).
+
 ### Check visualization (compact)
 
 Same visual style as workflows: colored FontAwesome icons, one per applicable check.

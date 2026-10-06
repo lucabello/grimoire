@@ -2,7 +2,9 @@
 
 from __future__ import annotations
 
-from grimoire.web.router import RepoViewModel
+from grimoire.config import DashboardConfig, WorkflowGroup
+from grimoire.models import WorkflowStatus
+from grimoire.web.router import RepoViewModel, group_workflows
 
 
 def _make_vm(**overrides: object) -> RepoViewModel:
@@ -97,3 +99,57 @@ class TestHealthStatusToggles:
         assert vm.include_checks is True
         assert vm.include_stale is True
         assert vm.health_status == "error"
+
+
+class TestGroupWorkflows:
+    """group_workflows splits workflows into configured columns."""
+
+    @staticmethod
+    def _wf(name: str, branch: str = "main") -> WorkflowStatus:
+        return WorkflowStatus(name=name, branch=branch, status="success", url="u")
+
+    def test_no_groups_single_column(self) -> None:
+        columns = group_workflows([self._wf("ci"), self._wf("release")], DashboardConfig())
+        assert [c.name for c in columns] == ["Workflows"]
+        assert len(columns[0].workflows) == 2
+
+    def test_groups_and_other(self) -> None:
+        config = DashboardConfig(
+            workflow_groups=[
+                WorkflowGroup(name="Release", match=["*release*"]),
+                WorkflowGroup(name="Nightly", match=["nightly*"]),
+            ]
+        )
+        columns = group_workflows(
+            [self._wf("ci"), self._wf("Publish release"), self._wf("nightly-e2e")], config
+        )
+        assert [c.name for c in columns] == ["Release", "Nightly", "Other"]
+        assert [w.name for w in columns[0].workflows] == ["Publish release"]
+        assert [w.name for w in columns[1].workflows] == ["nightly-e2e"]
+        assert [w.name for w in columns[2].workflows] == ["ci"]
+
+    def test_first_match_wins(self) -> None:
+        config = DashboardConfig(
+            workflow_groups=[
+                WorkflowGroup(name="A", match=["*release*"]),
+                WorkflowGroup(name="B", match=["nightly*release*"]),
+            ]
+        )
+        columns = group_workflows([self._wf("nightly-release")], config)
+        assert len(columns[0].workflows) == 1
+        assert columns[1].workflows == []
+
+    def test_show_other_false_drops_unmatched(self) -> None:
+        config = DashboardConfig(
+            workflow_groups=[WorkflowGroup(name="Release", match=["release*"])],
+            show_other=False,
+        )
+        columns = group_workflows([self._wf("ci")], config)
+        assert [c.name for c in columns] == ["Release"]
+        assert columns[0].workflows == []
+
+    def test_branches_preserved_within_column(self) -> None:
+        columns = group_workflows(
+            [self._wf("ci", "main"), self._wf("ci", "dev")], DashboardConfig()
+        )
+        assert list(columns[0].workflows_by_branch) == ["main", "dev"]

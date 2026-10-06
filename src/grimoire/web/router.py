@@ -5,6 +5,7 @@ from __future__ import annotations
 import re
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
+from fnmatch import fnmatch
 from importlib.metadata import version
 from pathlib import Path
 from typing import Any
@@ -16,7 +17,7 @@ from sqlalchemy import text
 from sqlmodel import select
 from sqlmodel.ext.asyncio.session import AsyncSession
 
-from grimoire.config import StalenessConfig
+from grimoire.config import DashboardConfig, StalenessConfig
 from grimoire.database import ActionRunRecord
 from grimoire.models import TrackedRepository, WorkflowStatus
 from grimoire.targeting import TargetSpec
@@ -50,6 +51,65 @@ def set_staleness_config(config: StalenessConfig) -> None:
     """Register the staleness thresholds from the app config."""
     global _staleness_config  # noqa: PLW0603
     _staleness_config = config
+
+
+# Module-level dashboard config — set from app lifespan
+_dashboard_config: DashboardConfig = DashboardConfig()
+
+
+def set_dashboard_config(config: DashboardConfig) -> None:
+    """Register the dashboard options from the app config."""
+    global _dashboard_config  # noqa: PLW0603
+    _dashboard_config = config
+
+
+@dataclass
+class WorkflowColumn:
+    """One dashboard column of workflows, grouped by branch."""
+
+    name: str
+    workflows_by_branch: dict[str, list[WorkflowStatus]] = field(default_factory=dict)
+
+    @property
+    def workflows(self) -> list[WorkflowStatus]:
+        return [wf for wfs in self.workflows_by_branch.values() for wf in wfs]
+
+
+def workflow_column_names(config: DashboardConfig | None = None) -> list[str]:
+    """Return the ordered column names for the workflow cell(s) of the dashboard."""
+    config = config or _dashboard_config
+    if not config.workflow_groups:
+        return ["Workflows"]
+    names = [group.name for group in config.workflow_groups]
+    if config.show_other:
+        names.append("Other")
+    return names
+
+
+def group_workflows(
+    workflows: list[WorkflowStatus], config: DashboardConfig | None = None
+) -> list[WorkflowColumn]:
+    """Split workflows into columns according to the dashboard config.
+
+    Every configured column is always returned (possibly empty) so table cells
+    line up across repositories.
+    """
+    config = config or _dashboard_config
+    columns = [WorkflowColumn(name) for name in workflow_column_names(config)]
+    by_name = {column.name: column for column in columns}
+    for wf in workflows:
+        target: WorkflowColumn | None
+        if not config.workflow_groups:
+            target = columns[0]
+        else:
+            group = next(
+                (g for g in config.workflow_groups if any(fnmatch(wf.name, p) for p in g.match)),
+                None,
+            )
+            target = by_name[group.name] if group else by_name.get("Other")
+        if target is not None:
+            target.workflows_by_branch.setdefault(wf.branch, []).append(wf)
+    return columns
 
 
 # Module-level backlog config — set from app lifespan
@@ -98,6 +158,7 @@ class RepoViewModel:
     warnings: list[str]
     workflows_by_branch: dict[str, list[WorkflowStatus]]
     checks_by_branch: dict[str, list[dict[str, Any]]]
+    workflow_columns: list[WorkflowColumn] = field(default_factory=list)
     fetched_at: datetime | None = None
     last_commit_at: datetime | None = None
     total_branches: int = 0
@@ -473,6 +534,7 @@ async def _build_repo_viewmodels(
                 warnings=stats.warnings,
                 workflows_by_branch=workflows_by_branch,
                 checks_by_branch=checks_by_branch,
+                workflow_columns=group_workflows(stats.workflows),
                 fetched_at=stats.fetched_at,
                 last_commit_at=stats.last_commit_at,
                 total_branches=stats.total_branches,
@@ -544,6 +606,7 @@ async def dashboard(
             "include_checks": include_checks,
             "include_stale": include_stale,
             "sort_labels": SORT_LABELS,
+            "workflow_column_names": workflow_column_names(),
             "staleness": _staleness_config,
             "time_ago": _time_ago,
             "running": refresh_running,
@@ -594,6 +657,7 @@ async def repository_detail(request: Request, owner: str, name: str) -> HTMLResp
             "repo": repo,
             "branches": branches,
             "workflows_by_branch": workflows_by_branch,
+            "workflow_columns": group_workflows(stats.workflows),
             "checks_by_branch": checks_by_branch,
             "workflow_failures": workflow_failures,
             "workflow_pending": workflow_pending,
@@ -776,6 +840,7 @@ async def dashboard_matrix_partial(
             "dir": dir,
             "include_checks": include_checks,
             "include_stale": include_stale,
+            "workflow_column_names": workflow_column_names(),
             "staleness": _staleness_config,
             "time_ago": _time_ago,
         },

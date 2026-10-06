@@ -196,6 +196,33 @@ backlog:
 
 ---
 
+## `dashboard` {: #dashboard }
+
+**Optional.** Dashboard presentation options.
+
+### `workflow_groups`
+
+Split CI workflows into separate dashboard columns, for example to make release or nightly pipelines stand out. Each group has a `name` (the column header) and a list of `match` glob patterns tested against the workflow name. The first group that matches wins.
+
+```yaml
+dashboard:
+  workflow_groups:
+    - name: "Release"
+      match: ["*release*", "*publish*"]
+    - name: "Nightly"
+      match: ["nightly*"]
+  show_other: true
+```
+
+| Field | Default | Description |
+|-------|---------|-------------|
+| `workflow_groups` | `[]` | Ordered list of groups. Group names must be unique and `match` must not be empty. |
+| `show_other` | `true` | Show a trailing **Other** column for workflows matching no group. Set to `false` to hide them. |
+
+Without `workflow_groups`, all workflows share a single **Workflows** column. The grouping also applies to the dashboard list view and the repository page.
+
+---
+
 ## `refresh_schedule` {: #refresh-schedule }
 
 **Optional.** Cron expression controlling how often Grimoire fetches fresh data from GitHub and runs checks with no custom schedule.

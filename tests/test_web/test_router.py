@@ -751,3 +751,33 @@ class TestLoadingState:
             assert resp.status_code == 200
             assert "3 of 7" in resp.text
             assert "HX-Redirect" not in resp.headers
+
+
+class TestWorkflowGroupColumns:
+    """Dashboard renders one column per configured workflow group."""
+
+    async def test_default_single_workflows_column(self, web_client: AsyncClient) -> None:
+        resp = await web_client.get("/partials/dashboard-matrix")
+        assert ">Workflows</th>" in resp.text
+        assert ">Other</th>" not in resp.text
+
+    async def test_group_columns_in_matrix_and_list(self, web_client: AsyncClient) -> None:
+        from grimoire.config import DashboardConfig, WorkflowGroup
+        from grimoire.web import router as web_router
+
+        previous = web_router._dashboard_config
+        web_router.set_dashboard_config(
+            DashboardConfig(workflow_groups=[WorkflowGroup(name="Release", match=["*zzz*"])])
+        )
+        try:
+            matrix = await web_client.get("/partials/dashboard-matrix")
+            listing = await web_client.get("/partials/dashboard-list")
+            repo_page = await web_client.get("/repo/acme/api")
+        finally:
+            web_router.set_dashboard_config(previous)
+        assert ">Release</th>" in matrix.text
+        assert ">Other</th>" in matrix.text
+        assert ">Workflows</th>" not in matrix.text
+        assert ">Other</div>" in listing.text
+        assert repo_page.status_code == 200
+        assert ">Other</div>" in repo_page.text
