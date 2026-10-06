@@ -1,7 +1,7 @@
 <table class="table table-xs w-full">
     <thead>
         <tr class="text-xs uppercase tracking-wider">
-            {% set hx_base = "/partials/dashboard-matrix" %}
+            {% set hx_base = base_path ~ "/partials/dashboard-matrix" %}
             {% set next_dir = "desc" if (dir == "asc") else "asc" %}
             {% set health_qs = "&include_checks=" + ("true" if include_checks else "false") + "&include_stale=" + ("true" if include_stale else "false") %}
             <th class="cursor-pointer hover:text-primary text-center py-1 w-8"
@@ -50,7 +50,7 @@
 
             {# ── Repository Name ── #}
             <td class="py-0.5">
-                <a href="/repo/{{ repo.full_name }}" class="link link-hover text-sm"
+                <a href="{{ base_path }}/repo/{{ repo.full_name }}" class="link link-hover text-sm"
                    title="{{ repo.full_name }}">{{ repo.full_name }}</a>
             </td>
 
@@ -95,7 +95,7 @@
                     {% for branch, checks in repo.checks_by_branch.items() %}
                         {% for chk in checks %}
                         <div class="tooltip tooltip-top" data-tip="{{ chk.check_name }} ({{ branch }}): {{ chk.status }}">
-                            <a href="/checks?expand={{ chk.check_slug }}{% if chk.id %}&result={{ chk.id }}{% endif %}#check-card-{{ chk.check_slug }}">
+                            <a href="{{ base_path }}/checks?expand={{ chk.check_slug }}{% if chk.id %}&result={{ chk.id }}{% endif %}#check-card-{{ chk.check_slug }}">
                             {% if chk.status == "pass" %}<i class="fa-solid fa-check status-icon status-icon-pass"></i>
                             {% elif chk.status == "fail" and chk.severity == "warning" %}<i class="fa-solid fa-triangle-exclamation status-icon status-icon-pending" title="Warning (non-critical)"></i>
                             {% elif chk.status == "fail" %}<i class="fa-solid fa-xmark status-icon status-icon-fail"></i>

@@ -1,17 +1,56 @@
 """CLI entrypoint for Grimoire."""
 
+import argparse
+import os
 import sys
+from pathlib import Path
 
 
-def main() -> None:
+def _parse_args(argv: list[str] | None) -> argparse.Namespace:
+    parser = argparse.ArgumentParser(prog="grimoire", description="Run the Grimoire server.")
+    parser.add_argument(
+        "--config-file",
+        type=Path,
+        help="path to the config file (default: $GRIMOIRE_CONFIG or ./config.yaml)",
+    )
+    parser.add_argument(
+        "--host",
+        default=os.environ.get("GRIMOIRE_HOST", "0.0.0.0"),
+        help="interface to bind to (default: $GRIMOIRE_HOST or 0.0.0.0)",
+    )
+    parser.add_argument(
+        "--port",
+        type=int,
+        default=int(os.environ.get("GRIMOIRE_PORT", "8000")),
+        help="port to listen on (default: $GRIMOIRE_PORT or 8000)",
+    )
+    parser.add_argument(
+        "--root-path",
+        default=os.environ.get("GRIMOIRE_ROOT_PATH", ""),
+        help="URL prefix when served behind a proxy, e.g. /grimoire (default: $GRIMOIRE_ROOT_PATH or none)",
+    )
+    args = parser.parse_args(argv)
+    if args.config_file is not None and not args.config_file.is_file():
+        parser.error(f"config file not found: {args.config_file}")
+    root_path = args.root_path.strip("/")
+    args.root_path = f"/{root_path}" if root_path else ""
+    return args
+
+
+def main(argv: list[str] | None = None) -> None:
     """Run the Grimoire server."""
     import uvicorn
+
+    args = _parse_args(argv)
+    if args.config_file is not None:
+        os.environ["GRIMOIRE_CONFIG"] = str(args.config_file)
 
     uvicorn.run(
         "grimoire.app:create_app",
         factory=True,
-        host="0.0.0.0",
-        port=8000,
+        host=args.host,
+        port=args.port,
+        root_path=args.root_path,
         loop="asyncio",
     )
 

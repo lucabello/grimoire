@@ -523,3 +523,11 @@ Every section must render a helpful message when there's no data:
 - [ ] HTMX partial updates work without full page reloads
 - [ ] Pages render correctly in both light and dark mode
 - [ ] Pages are responsive (usable on tablet/mobile, scrollable tables)
+
+## URL prefix (root_path)
+
+The app may be served under a path prefix (ASGI `root_path`, set with `grimoire --root-path /prefix`). Templates must never hard-code absolute URLs:
+
+- Templates use `{{ base_path }}` (injected by a Jinja context processor from `request.scope["root_path"]`).
+- JavaScript uses `BASE_PATH`, defined in `base.html`.
+- Server redirects (e.g. `HX-Redirect`) use `_base_path(request)`.

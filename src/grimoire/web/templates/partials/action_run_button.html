@@ -2,7 +2,7 @@
    Only polls when running (every 2s). Idle state is static. #}
 {% if running %}
 <div id="action-run-btn-{{ slug }}"
-     hx-get="/partials/action-run-status/{{ slug }}?was_running=1"
+     hx-get="{{ base_path }}/partials/action-run-status/{{ slug }}?was_running=1"
      hx-trigger="every 2s"
      hx-swap="outerHTML">
     <button class="btn btn-primary btn-sm gap-1" disabled>
@@ -16,7 +16,7 @@
 {% else %}
 <div id="action-run-btn-{{ slug }}">
     <button class="btn btn-primary btn-sm gap-1"
-            hx-post="/partials/action-run/{{ slug }}"
+            hx-post="{{ base_path }}/partials/action-run/{{ slug }}"
             hx-target="#action-run-btn-{{ slug }}"
             hx-swap="outerHTML"
             hx-on::after-request="if(!event.detail.successful) { showToast(event.detail.xhr?.status === 409 ? 'Action is already running' : 'Failed to trigger action', 'error'); }">

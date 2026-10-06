@@ -5,7 +5,7 @@
 <div class="hero min-h-[60vh]">
     <div class="hero-content text-center">
         <div class="max-w-md"
-             hx-get="/partials/loading-status"
+             hx-get="{{ base_path }}/partials/loading-status"
              hx-trigger="every 2s"
              hx-swap="innerHTML">
             {% include "partials/loading_progress.html" %}

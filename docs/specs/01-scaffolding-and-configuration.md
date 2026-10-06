@@ -240,3 +240,7 @@ async def get_session(engine: AsyncEngine) -> AsyncSession: ...
 - [ ] Database tables are created on startup
 - [ ] `just dev` starts the server on port 8000, returns 200 on `GET /`
 - [ ] Tests cover config parsing (valid input, missing fields, invalid values)
+
+## CLI
+
+`grimoire [--config-file PATH] [--host HOST] [--port PORT] [--root-path /prefix]`. Defaults come from `GRIMOIRE_HOST`, `GRIMOIRE_PORT`, `GRIMOIRE_ROOT_PATH`, else `0.0.0.0`, `8000`, none. `--config-file` must exist and is exported as `GRIMOIRE_CONFIG`. `--root-path` is normalised to `/prefix` and passed to uvicorn.

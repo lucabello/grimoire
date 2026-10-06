@@ -88,6 +88,25 @@ server {
 
 Grimoire exposes a health endpoint at `GET /health`. The Docker image includes a built-in `HEALTHCHECK` that polls this endpoint every 30 seconds.
 
+## Running behind a reverse proxy
+
+Grimoire can be served under a URL prefix, so several instances (one per project) can share one host:
+
+```bash
+grimoire --config-file config.projecta.yaml --port 8001 --root-path /projecta
+grimoire --config-file config.projectb.yaml --port 8002 --root-path /projectb
+```
+
+Each flag has an environment variable equivalent: `GRIMOIRE_HOST`, `GRIMOIRE_PORT`, `GRIMOIRE_ROOT_PATH`. `--config-file` sets `GRIMOIRE_CONFIG`. Give each instance its own `database_path`.
+
+The proxy must strip the prefix before forwarding:
+
+```nginx
+location /projecta/ {
+    proxy_pass http://127.0.0.1:8001/;
+}
+```
+
 ## Security considerations
 
 !!! warning "Grimoire executes arbitrary shell scripts"

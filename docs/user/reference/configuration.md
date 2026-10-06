@@ -8,7 +8,7 @@ All string values support environment variable references with the syntax `"${EN
 
 Grimoire looks for its configuration in this order:
 
-1. Explicit path passed at startup
+1. `--config-file PATH` on the `grimoire` command line
 2. `GRIMOIRE_CONFIG` environment variable
 3. `./config.yaml` in the working directory
 4. `~/.config/grimoire/config.yaml` (XDG config path)
