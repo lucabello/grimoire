@@ -154,7 +154,8 @@ Pydantic models for domain concepts (not DB models — those come in 1.4):
 class TrackedRepository(BaseModel):
     full_name: str          # "owner/repo"
     branches: list[str]     # branches to observe; empty = default branch only
-    source: str             # "static" | "team:org/team-name"
+    sources: list[str]      # "static" and/or "team:org/team-name" (multi-team OK)
+    # `.source` property returns sources[0] for display / backward compat
 
 class WorkflowStatus(BaseModel):
     name: str

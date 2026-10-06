@@ -142,6 +142,10 @@ All three views accept the same `sort` and `dir` query parameters. The table vie
 
 **Health status display toggle:** A ⚙ gear-icon dropdown sits next to the view switcher with two checkboxes — "Check results" and "Stale issues/PRs" — controlling whether each contributes to the computed `health_status` (see below). Both default on. Workflow failures always count and are not toggleable. State is persisted per-browser in `localStorage` (`grimoire-health-include-checks`, `grimoire-health-include-stale`); toggling re-fetches both `#repo-grid` and the stats bar (`#stats-bar`, via `GET /partials/dashboard-stats`) so the accent colors, status icons, and the "Repositories" stat panel's failing/warning/healthy breakdown stay consistent. The underlying issue/PR/check/workflow counts themselves are unaffected — only the derived health status.
 
+**Sub-team filter:** When configured or tracked repos include `team:org/slug` sources, a Team `<select>` appears on the **dashboard** and **backlog** (options: **All** / **All teams** plus each team’s short slug label, e.g. `workflows`, `MLOps`, `processing` — org prefix omitted). Selecting a team sets the shareable query param `?team=workflows` (omit / empty / `all` = no filter). Filter matches repos whose `sources` contain a matching `team:…` label (slug or full `org/slug`). On the dashboard the same `team` param is passed to `/partials/dashboard-matrix`, `/partials/dashboard-list`, and `/partials/dashboard-stats` so HTMX refreshes stay in sync; stats bar totals reflect the filtered set. On the backlog, `team` is passed to `/partials/backlog-items` and `/api/backlog/export`. Dropdown options always include teams from config even if a team currently has zero cached repos. URLs must remain correct under ASGI `root_path` / `--root-path`.
+
+**Repository name display (dashboard):** Matrix and list views show the short repo name (without the `owner/` prefix) for readability; the full `owner/repo` remains in the link `href` and `title` tooltip.
+
 **Staleness highlighting:** Stale issue/PR counts are highlighted in yellow only when the stale percentage (stale/open) meets or exceeds the configured thresholds (`staleness.problematic_stale_issues_pct`, `staleness.problematic_stale_prs_pct`). Below the threshold, stale counts render without warning color.
 
 ### Health Status & Accent Colors
@@ -386,7 +390,8 @@ Each item gets a priority score: `score = category_weight × repo_weight × work
 
 **Header:**
 - Title: "Backlog"
-- Summary: "N items across M repos — X critical, Y high, Z medium, W low"
+- Summary: "N items across M repos — X critical, Y high, Z medium, W low" (updates via HTMX out-of-band swap when filters/`?team=` change)
+- Team filter: same sub-team dropdown as the dashboard (`?team=` slug); filters items to repos belonging to that team source
 - Search input: always-visible text box with magnifying-glass icon. Filters items via server-side substring match (case-insensitive) against repo name, description, category label, and branch name. Input is debounced (300 ms) and triggers HTMX partial reload.
 - View toggle: flat list / group by repository (DaisyUI `join` button group)
 - Export dropdown: "Export All as Markdown" / "Copy to Clipboard"
@@ -437,9 +442,9 @@ Individual items can be copied via the per-row clipboard button.
 
 | Endpoint | Method | Returns |
 |----------|--------|---------|
-| `GET /backlog` | GET | Full page. Accepts `?group_by=repo` or `?group_by=type` for grouped views. |
-| `GET /partials/backlog-items` | GET | HTMX partial (item list). Accepts query params: `category`, `repo`, `group_by` (`repo` or `type`), `search`, weight overrides. |
-| `GET /api/backlog/export` | GET | Full backlog as Markdown text |
+| `GET /backlog` | GET | Full page. Accepts `?group_by=repo` or `?group_by=type` for grouped views; `?team=` for sub-team filter. |
+| `GET /partials/backlog-items` | GET | HTMX partial (item list). Accepts query params: `category`, `repo`, `group_by` (`repo` or `type`), `search`, `team`, weight overrides. Also returns an out-of-band `#backlog-summary` update so the header counts match the filtered set. |
+| `GET /api/backlog/export` | GET | Full backlog as Markdown text (accepts same filter params including `team`) |
 | `POST /api/backlog/save-weights` | POST | Persists category weight changes to `config.yaml` and reloads in-memory config |
 
 ### Item Sources
@@ -481,7 +486,8 @@ These endpoints return HTML fragments (not full pages) for HTMX to swap in:
 | `GET /partials/dashboard-cards?sort=...&dir=...` | Grid view: card layout |
 | `GET /partials/dashboard-list?sort=...&dir=...` | List view: compact rows |
 | `GET /partials/dashboard-table?sort=...&dir=...` | Table view: data table |
-| `GET /partials/dashboard-stats?include_checks=...&include_stale=...` | Stats bar, respecting the health status display toggle |
+| `GET /partials/dashboard-stats?include_checks=...&include_stale=...&team=...` | Stats bar, respecting health toggles and optional team filter |
+| `GET /?team=workflows` | Dashboard filtered to repos from that team source (slug or `org/slug`) |
 | `GET /partials/action-run/{run_id}` | Expanded action run details |
 | `GET /partials/action-results/{slug}?sort=...&dir=...` | Per-action results grouped by run (collapsible) |
 | `GET /partials/action-output/{result_id}` | Expanded action output text |
@@ -513,6 +519,10 @@ Every section must render a helpful message when there's no data:
 ## Acceptance Criteria
 
 - [ ] Dashboard renders all tracked repos with correct stats
+- [ ] Sub-team filter (`?team=` slug) shows only matching repos; stats bar matches filtered set
+- [ ] Team filter control lists configured teams with short labels (no org prefix); "All" clears the filter
+- [ ] Dashboard matrix/list show short repo names (no `owner/` prefix); full name remains in link/tooltip
+- [ ] Backlog page and `/partials/backlog-items` honor the same `?team=` filter
 - [ ] Sorting works for all columns (name, issues, stale issues, PRs, stale PRs, workflow failures, check failures)
 - [ ] Multi-branch repos show per-branch workflow/check status in a single row
 - [ ] Per-repo warnings display as amber indicators with hover text

@@ -87,8 +87,8 @@ async def resolve_repositories(
         no branches specified.
       - TeamRepoSource: fetch team repos, exclude listed repos, filter out
         archived repos.
-    Deduplicate by full_name (merge branches if same repo appears in
-    multiple sources).
+    Deduplicate by full_name (merge branches **and** `sources` labels if
+    the same repo appears in multiple config entries).
     Always filter out archived repositories.
     """
 
@@ -183,7 +183,8 @@ class RepoSummary(BaseModel):
     full_name: str
     default_branch: str
     branches: list[str]
-    source: str                     # "static" | "team:org/team-name"
+    sources: list[str]              # "static" and/or "team:org/team-name"
+    source: str                     # primary sources[0] (compat)
     open_issues: int
     stale_issues: int
     open_pull_requests: int
@@ -203,6 +204,7 @@ class RepoDetailResponse(BaseModel):
     full_name: str
     default_branch: str
     branches: list[str]
+    sources: list[str]
     source: str
     open_issues: int
     stale_issues: list[IssueResponse]
@@ -252,6 +254,7 @@ class RefreshResponse(BaseModel):
 - [ ] `GET /api/repos/{owner}/{name}` returns 404 for untracked repos
 - [ ] `POST /api/refresh` returns 202 and triggers a background refresh
 - [ ] `resolve_repositories` correctly handles static repos, team repos, exclusions, and archived filtering
+- [ ] When the same repo appears under multiple team sources, `sources` lists all of them
 - [ ] `fetch_repository_stats` returns correct issue/PR/workflow counts
 - [ ] Stale detection works: issues with no comments beyond threshold, PRs with no pushes/comments beyond threshold
 - [ ] Pagination works for repos with >30 issues/PRs
