@@ -30,13 +30,13 @@ def _populate_cache() -> None:
             full_name="acme/api",
             default_branch="main",
             branches=["main"],
-            source="static",
+            sources=["team:acme/backend"],
         ),
         TrackedRepository(
             full_name="acme/frontend",
             default_branch="main",
             branches=["main", "develop"],
-            source="static",
+            sources=["team:acme/frontend-team", "team:acme/backend"],
         ),
     ]
     stats = [

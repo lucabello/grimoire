@@ -27,6 +27,28 @@ class TestDashboard:
         resp = await web_client.get("/")
         assert "Rate limit approaching" in resp.text
 
+    async def test_dashboard_team_filter_control(self, web_client: AsyncClient) -> None:
+        resp = await web_client.get("/")
+        assert resp.status_code == 200
+        assert 'id="team-filter"' in resp.text
+        # Labels / values are slug-only (no org prefix)
+        assert 'value="backend"' in resp.text
+        assert 'value="frontend-team"' in resp.text
+        assert ">backend<" in resp.text
+        assert ">frontend-team<" in resp.text
+
+    async def test_dashboard_filters_by_team(self, web_client: AsyncClient) -> None:
+        resp = await web_client.get("/?team=frontend-team")
+        assert resp.status_code == 200
+        assert "acme/frontend" in resp.text
+        assert "acme/api" not in resp.text
+
+    async def test_dashboard_team_all_shows_both(self, web_client: AsyncClient) -> None:
+        resp = await web_client.get("/?team=all")
+        assert resp.status_code == 200
+        assert "acme/api" in resp.text
+        assert "acme/frontend" in resp.text
+
 
 class TestRepositoryDetail:
     """Tests for GET /repo/{owner}/{name} route."""
@@ -241,6 +263,14 @@ class TestDashboardListPartial:
         resp = await web_client.get("/partials/dashboard-list?sort=name&dir=asc")
         assert "⚠" in resp.text
 
+    async def test_list_filters_by_team(self, web_client: AsyncClient) -> None:
+        resp = await web_client.get(
+            "/partials/dashboard-list?sort=name&dir=asc&team=frontend-team"
+        )
+        assert resp.status_code == 200
+        assert "acme/frontend" in resp.text
+        assert "acme/api" not in resp.text
+
 
 class TestDashboardStatsPartial:
     """Tests for GET /partials/dashboard-stats route."""
@@ -262,6 +292,13 @@ class TestDashboardStatsPartial:
         off_resp = await web_client.get("/partials/dashboard-stats?include_stale=false")
         assert "1 warning" not in off_resp.text
         assert "1 healthy" in off_resp.text  # acme/api becomes healthy
+
+    async def test_stats_filters_by_team(self, web_client: AsyncClient) -> None:
+        resp = await web_client.get("/partials/dashboard-stats?team=frontend-team")
+        assert resp.status_code == 200
+        # Only acme/frontend matches — one repo in the stats bar
+        assert ">1<" in resp.text or "stat-value" in resp.text
+        assert "Repositories" in resp.text
 
 
 class TestDashboardHealthToggle:

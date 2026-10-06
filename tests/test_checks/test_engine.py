@@ -176,7 +176,7 @@ class TestRunningStateTracking:
             script="exit 0",
             description="",
         )
-        repo = TrackedRepository(full_name="acme/repo", default_branch="main", source="static")
+        repo = TrackedRepository(full_name="acme/repo", default_branch="main", sources=["static"])
         workspace = MockWorkspace(tmp_path)
 
         assert not is_check_running("tracker-test")
