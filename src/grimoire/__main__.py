@@ -13,14 +13,24 @@ def _parse_args(argv: list[str] | None) -> argparse.Namespace:
         type=Path,
         help="path to the config file (default: $GRIMOIRE_CONFIG or ./config.yaml)",
     )
-    parser.add_argument("--port", type=int, default=8000, help="port to listen on (default: 8000)")
     parser.add_argument(
-        "--host", default="0.0.0.0", help="interface to bind to (default: 0.0.0.0)"
+        "--port",
+        type=int,
+        default=int(os.environ.get("GRIMOIRE_PORT", "8000")),
+        help="port to listen on (default: $GRIMOIRE_PORT or 8000)",
+    )
+    parser.add_argument(
+        "--host",
+        default=os.environ.get("GRIMOIRE_HOST", "0.0.0.0"),
+        help="interface to bind to (default: $GRIMOIRE_HOST or 0.0.0.0)",
     )
     parser.add_argument(
         "--root-path",
-        default="",
-        help="URL prefix when served behind a proxy/ingress, e.g. /grimoire (default: none)",
+        default=os.environ.get("GRIMOIRE_ROOT_PATH", ""),
+        help=(
+            "URL prefix when served behind a proxy/ingress, e.g. /grimoire "
+            "(default: $GRIMOIRE_ROOT_PATH or none)"
+        ),
     )
     args = parser.parse_args(argv)
     if args.config_file is not None and not args.config_file.is_file():

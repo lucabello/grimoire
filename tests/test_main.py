@@ -51,3 +51,20 @@ def test_missing_config_file_exits(tmp_path: Path) -> None:
     with patch("uvicorn.run") as run, pytest.raises(SystemExit):
         main(["--config-file", str(tmp_path / "nope.yaml")])
     run.assert_not_called()
+
+
+def test_env_var_defaults(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("GRIMOIRE_HOST", "127.0.0.1")
+    monkeypatch.setenv("GRIMOIRE_PORT", "9000")
+    monkeypatch.setenv("GRIMOIRE_ROOT_PATH", "proj/")
+    with patch("uvicorn.run") as run:
+        main([])
+    kwargs = run.call_args.kwargs
+    assert (kwargs["host"], kwargs["port"], kwargs["root_path"]) == ("127.0.0.1", 9000, "/proj")
+
+
+def test_cli_flags_override_env_vars(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("GRIMOIRE_PORT", "9000")
+    with patch("uvicorn.run") as run:
+        main(["--port", "9100"])
+    assert run.call_args.kwargs["port"] == 9100

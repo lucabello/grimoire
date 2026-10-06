@@ -19,7 +19,7 @@ To run several instances side by side, give each its own config file and port:
 uv run grimoire --config-file config.mlops.yaml --port 8001
 ```
 
-`grimoire --help` lists all options (`--config-file`, `--port`, `--host`).
+`grimoire --help` lists all options (`--config-file`, `--port`, `--host`, `--root-path`). `--host`, `--port` and `--root-path` can also be set with the `GRIMOIRE_HOST`, `GRIMOIRE_PORT` and `GRIMOIRE_ROOT_PATH` environment variables; flags take precedence.
 
 ---
 
