@@ -7,19 +7,18 @@
 <div class="flex flex-col gap-1 mb-6">
     <h1 class="text-3xl font-bold">Backlog</h1>
     <div class="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-2">
-        <p class="text-sm opacity-60">
-            {{ total_items }} item{{ 's' if total_items != 1 else '' }}
-            across {{ repos_with_items }} repo{{ 's' if repos_with_items != 1 else '' }}
-            {% if tier_counts %}
-            —
-            {% if tier_counts.get('critical', 0) %}<span class="text-error">{{ tier_counts.critical }} critical</span>{% endif %}
-            {% if tier_counts.get('critical', 0) and tier_counts.get('high', 0) %} · {% endif %}
-            {% if tier_counts.get('high', 0) %}<span class="text-warning">{{ tier_counts.high }} high</span>{% endif %}
-            {% if (tier_counts.get('critical', 0) or tier_counts.get('high', 0)) and (tier_counts.get('medium', 0) + tier_counts.get('low', 0)) %} · {% endif %}
-            {% if tier_counts.get('medium', 0) + tier_counts.get('low', 0) %}<span class="opacity-60">{{ tier_counts.get('medium', 0) + tier_counts.get('low', 0) }} other</span>{% endif %}
-            {% endif %}
+        <p id="backlog-summary" class="text-sm opacity-60">
+            {% include "partials/backlog_summary.html" %}
         </p>
         <div class="flex gap-2 items-center">
+            {% if available_teams %}
+            <select id="backlog-team-filter" class="select select-sm select-bordered max-w-xs">
+                <option value="" {% if not team %}selected{% endif %}>All teams</option>
+                {% for t in available_teams %}
+                <option value="{{ t.value }}" {% if team == t.value %}selected{% endif %}>{{ t.label }}</option>
+                {% endfor %}
+            </select>
+            {% endif %}
             <label class="input input-sm input-bordered flex items-center gap-2">
                 <i class="fa-solid fa-magnifying-glass text-xs opacity-50"></i>
                 <input id="backlog-search" type="text" class="grow w-40" placeholder="Search…" />
@@ -251,6 +250,26 @@
 
     // --- View mode state ---
     let currentGroupBy = '{{ group_by }}';
+    let currentTeam = '{{ team }}';
+
+    function setBacklogTeamFilter(team) {
+        currentTeam = team || '';
+        const url = new URL(window.location.href);
+        if (currentTeam) {
+            url.searchParams.set('team', currentTeam);
+        } else {
+            url.searchParams.delete('team');
+        }
+        window.history.replaceState({}, '', url);
+        applyFilters();
+    }
+
+    const teamFilter = document.getElementById('backlog-team-filter');
+    if (teamFilter) {
+        teamFilter.addEventListener('change', function() {
+            setBacklogTeamFilter(this.value);
+        });
+    }
 
     // --- Filtering via HTMX ---
     function applyFilters() {
@@ -263,6 +282,7 @@
         if (parseFloat(minScore) > 0) params.set('min_score', minScore);
         if (currentGroupBy) params.set('group_by', currentGroupBy);
         if (searchVal) params.set('search', searchVal);
+        if (currentTeam) params.set('team', currentTeam);
         // Include weight slider values for live recalculation
         document.querySelectorAll('.weight-slider').forEach(s => {
             params.set('w_' + s.dataset.key, s.value);
@@ -321,10 +341,17 @@
     });
 
     // --- Export as Markdown ---
+    function backlogExportUrl() {
+        const params = new URLSearchParams();
+        if (currentTeam) params.set('team', currentTeam);
+        const qs = params.toString();
+        return BASE_PATH + '/api/backlog/export' + (qs ? '?' + qs : '');
+    }
+
     document.getElementById('export-md').addEventListener('click', async function(e) {
         e.preventDefault();
         try {
-            const resp = await fetch(BASE_PATH + '/api/backlog/export');
+            const resp = await fetch(backlogExportUrl());
             const text = await resp.text();
             await navigator.clipboard.writeText(text);
             showToast('Backlog copied to clipboard', 'success');
@@ -332,6 +359,14 @@
             showToast('Failed to copy', 'error');
         }
     });
+
+    const exportDownload = document.getElementById('export-download');
+    if (exportDownload) {
+        exportDownload.addEventListener('click', function(e) {
+            e.preventDefault();
+            window.open(backlogExportUrl(), '_blank');
+        });
+    }
 
     // --- Copy single item ---
     document.addEventListener('click', function(e) {

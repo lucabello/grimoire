@@ -39,6 +39,11 @@ from grimoire.github.service import (
 )
 from grimoire.models import RepositoryStats, TrackedRepository, WorkflowStatus
 
+
+def _rl_headers() -> dict[str, str]:
+    return {"X-RateLimit-Remaining": "4999", "X-RateLimit-Limit": "5000"}
+
+
 # ---------------------------------------------------------------------------
 # Fixtures
 # ---------------------------------------------------------------------------
@@ -96,6 +101,7 @@ async def test_resolve_static_repos(client: GitHubClient) -> None:
     assert repos[0].full_name == "owner/repo1"
     assert repos[0].branches == ["main", "develop"]
     assert repos[0].source == "static"
+    assert repos[0].sources == ["static"]
 
 
 @respx.mock
@@ -173,6 +179,34 @@ async def test_resolve_team_repos(client: GitHubClient) -> None:
     assert len(repos) == 1
     assert repos[0].full_name == "myorg/service-a"
     assert repos[0].source == "team:myorg/backend"
+    assert repos[0].sources == ["team:myorg/backend"]
+
+
+@respx.mock
+async def test_resolve_merges_sources_across_teams(client: GitHubClient) -> None:
+    """A repo belonging to two teams keeps both source labels."""
+    repo_payload = [
+        {
+            "full_name": "myorg/shared",
+            "default_branch": "main",
+            "archived": False,
+        }
+    ]
+    respx.get("https://api.github.com/orgs/myorg/teams/alpha/repos").mock(
+        return_value=httpx.Response(200, json=repo_payload, headers=_rl_headers())
+    )
+    respx.get("https://api.github.com/orgs/myorg/teams/beta/repos").mock(
+        return_value=httpx.Response(200, json=repo_payload, headers=_rl_headers())
+    )
+    config = _make_config(
+        repos=[
+            TeamRepoSource(team="myorg/alpha"),
+            TeamRepoSource(team="myorg/beta"),
+        ]
+    )
+    repos = await resolve_repositories(config, client)
+    assert len(repos) == 1
+    assert repos[0].sources == ["team:myorg/alpha", "team:myorg/beta"]
 
 
 # ---------------------------------------------------------------------------
@@ -295,7 +329,7 @@ async def test_save_and_load_stats(engine: AsyncEngine) -> None:
             full_name="owner/repo1",
             default_branch="main",
             branches=["main", "develop"],
-            source="static",
+            sources=["static"],
         )
     ]
     now = datetime.now(UTC)
@@ -330,6 +364,7 @@ async def test_save_and_load_stats(engine: AsyncEngine) -> None:
         assert len(cached) == 1
         assert cached[0].full_name == "owner/repo1"
         assert json.loads(cached[0].branches_json) == ["main", "develop"]
+        assert json.loads(cached[0].sources_json) == ["static"]
         assert cached[0].total_branches == 5
         assert cached[0].last_commit_at is not None
 
@@ -343,6 +378,7 @@ async def test_save_and_load_stats(engine: AsyncEngine) -> None:
     assert len(loaded_repos) == 1
     assert loaded_repos[0].full_name == "owner/repo1"
     assert loaded_repos[0].branches == ["main", "develop"]
+    assert loaded_repos[0].sources == ["static"]
     assert len(loaded_stats) == 1
     assert loaded_stats[0].workflows[0].name == "CI"
     assert loaded_stats[0].total_branches == 5
@@ -389,6 +425,14 @@ async def test_refresh_falls_back_to_cache_on_304(
             full_name="myorg/svc",
             default_branch="main",
             open_issues=3,
+            workflows=[
+                WorkflowStatus(
+                    name="CI",
+                    branch="main",
+                    status="success",
+                    url="https://github.com/myorg/svc/actions/workflows/ci.yml",
+                )
+            ],
             fetched_at=now,
         )
     ]
@@ -424,6 +468,7 @@ async def test_refresh_falls_back_to_cache_on_304(
     assert len(result_repos) == 1
     assert result_repos[0].full_name == "myorg/svc"
     assert len(result_stats) == 1
+    assert result_stats[0].workflows
 
 
 @respx.mock
@@ -490,8 +535,9 @@ async def test_workflow_runs_304_preserves_previous_status(client: GitHubClient)
     assert stats.workflows[0].status == "success"
 
 
-def _rl_headers() -> dict[str, str]:
-    return {"X-RateLimit-Remaining": "4999", "X-RateLimit-Limit": "5000"}
+# ---------------------------------------------------------------------------
+# Workflow run fallback helpers
+# ---------------------------------------------------------------------------
 
 
 @respx.mock
@@ -1078,7 +1124,18 @@ async def test_refresh_tracks_progress(client: GitHubClient, engine: AsyncEngine
     now = datetime.now(UTC)
     stats_list = [
         RepositoryStats(
-            full_name="myorg/svc", default_branch="main", open_issues=0, fetched_at=now
+            full_name="myorg/svc",
+            default_branch="main",
+            open_issues=0,
+            workflows=[
+                WorkflowStatus(
+                    name="CI",
+                    branch="main",
+                    status="success",
+                    url="https://github.com/myorg/svc/actions/workflows/ci.yml",
+                )
+            ],
+            fetched_at=now,
         )
     ]
     await save_stats_to_db(engine, stats_list, repos)

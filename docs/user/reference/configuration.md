@@ -107,6 +107,10 @@ repositories:
       exclude: ["Release *"]
 ```
 
+You can list multiple `- team:` / `- repo:` entries. The same repository appearing under more than one team is merged (all team labels are kept for dashboard filtering).
+
+**Dashboard sub-team filter:** When team sources are configured, the dashboard and backlog show a Team dropdown listing each team's short name (e.g. `workflows`, `MLOps`, `processing` — the slug without the org prefix). The filter uses `?team=workflows`. Choose **All** to show every tracked repo / backlog item. Teams from config always appear in the dropdown, even if that team currently has no cached repositories. On the dashboard, repository rows display the short repo name (without `owner/`) for readability.
+
 ---
 
 ## `staleness` {: #staleness }
@@ -133,6 +137,8 @@ staleness:
 The thresholds above control *when* issues/PRs count as stale and *how* stale counts are highlighted — they don't control whether staleness affects a repo's overall health status (the left-border accent / status icon on the dashboard).
 
 That's a separate, per-browser display preference: click the ⚙ icon next to the dashboard's view switcher to toggle whether **check results** and/or **stale issues/PRs** are factored into the computed health status. Workflow failures always count. This preference is stored in your browser's `localStorage`, not in `config.yaml` — it doesn't affect other viewers of the same Grimoire instance.
+
+When multiple GitHub team sources are configured, use the **Team** dropdown on the dashboard and backlog to narrow results to one sub-team. The filter is shareable via `?team=workflows` (team slug) in the URL.
 
 ---
 

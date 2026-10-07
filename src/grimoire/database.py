@@ -113,7 +113,7 @@ class CachedRepository(SQLModel, table=True):
     full_name: str = Field(primary_key=True)
     default_branch: str = "main"
     archived: bool = False
-    source: str = "static"
+    sources_json: str = '["static"]'  # JSON-encoded list: "static" | "team:org/team"
     branches_json: str = "[]"  # JSON-encoded list of observed branches
     open_issues: int = 0
     stale_issues: int = 0

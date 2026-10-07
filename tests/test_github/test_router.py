@@ -9,7 +9,7 @@ from grimoire.models import RepositoryStats, TrackedRepository
 
 
 def _make_repo(name: str = "owner/repo") -> TrackedRepository:
-    return TrackedRepository(full_name=name, branches=["main"], source=name)
+    return TrackedRepository(full_name=name, branches=["main"], sources=[name])
 
 
 def _make_stats(name: str = "owner/repo", fetched_at: datetime | None = None) -> RepositoryStats:

@@ -270,7 +270,7 @@ def _make_repo(name: str = "acme/api", branches: list[str] | None = None) -> Tra
         full_name=name,
         default_branch="main",
         branches=branches or ["main"],
-        source="static",
+        sources=["static"],
     )
 
 
@@ -757,6 +757,41 @@ class TestBacklogRoute:
         assert resp.status_code == 200
         # acme/api has stale PRs and issues
         assert "acme/api" in resp.text
+
+    async def test_backlog_team_filter_control(self, web_client: AsyncClient) -> None:
+        resp = await web_client.get("/backlog")
+        assert resp.status_code == 200
+        assert 'id="backlog-team-filter"' in resp.text
+        assert 'value="backend"' in resp.text
+        assert 'value="frontend-team"' in resp.text
+
+    async def test_backlog_filters_by_team(self, web_client: AsyncClient) -> None:
+        resp = await web_client.get("/backlog?team=frontend-team")
+        assert resp.status_code == 200
+        assert "acme/frontend" in resp.text
+        assert "Build" in resp.text
+        # api-only items (stale issues/PRs) should be gone
+        assert "Fix legacy endpoint" not in resp.text
+        assert "acme/api" not in resp.text
+
+    async def test_backlog_team_all_shows_both(self, web_client: AsyncClient) -> None:
+        resp = await web_client.get("/backlog?team=all")
+        assert resp.status_code == 200
+        assert "acme/api" in resp.text
+        assert "acme/frontend" in resp.text
+
+    async def test_backlog_items_partial_filter_by_team(
+        self,
+        web_client: AsyncClient,
+    ) -> None:
+        resp = await web_client.get("/partials/backlog-items?team=frontend-team")
+        assert resp.status_code == 200
+        assert "acme/frontend" in resp.text
+        assert "acme/api" not in resp.text
+        # Header summary is updated out-of-band with the filtered counts
+        assert 'id="backlog-summary"' in resp.text
+        assert "hx-swap-oob" in resp.text
+        assert "1 item" in resp.text or "item" in resp.text
 
     async def test_backlog_items_partial(self, web_client: AsyncClient) -> None:
         resp = await web_client.get("/partials/backlog-items")

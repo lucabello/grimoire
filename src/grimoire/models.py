@@ -8,7 +8,7 @@ from __future__ import annotations
 
 from datetime import datetime
 
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 
 
 class TrackedRepository(BaseModel):
@@ -17,9 +17,16 @@ class TrackedRepository(BaseModel):
     full_name: str  # "owner/repo"
     default_branch: str = "main"
     branches: list[str] = []  # branches to observe; empty → default branch only
-    source: str = "static"  # "static" | "team:org/team-name"
+    sources: list[str] = Field(default_factory=lambda: ["static"])
+    # Each entry is "static" or "team:org/team-name". A repo can belong to
+    # multiple team sources when listed under more than one config entry.
     workflow_include: list[str] = []  # glob patterns; empty → include all
     workflow_exclude: list[str] = []  # glob patterns; empty → exclude none
+
+    @property
+    def source(self) -> str:
+        """Primary source label (first entry) for backward-compatible display."""
+        return self.sources[0] if self.sources else "static"
 
 
 class WorkflowStatus(BaseModel):

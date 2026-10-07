@@ -3,7 +3,7 @@
         <tr class="text-xs uppercase tracking-wider">
             {% set hx_base = base_path ~ "/partials/dashboard-matrix" %}
             {% set next_dir = "desc" if (dir == "asc") else "asc" %}
-            {% set health_qs = "&include_checks=" + ("true" if include_checks else "false") + "&include_stale=" + ("true" if include_stale else "false") %}
+            {% set health_qs = "&include_checks=" + ("true" if include_checks else "false") + "&include_stale=" + ("true" if include_stale else "false") + (("&team=" + team) if team else "") %}
             <th class="cursor-pointer hover:text-primary text-center py-1 w-8"
                 hx-get="{{ hx_base }}?sort=health&dir={% if sort == 'health' %}{{ next_dir }}{% else %}desc{% endif %}{{ health_qs }}"
                 hx-target="#repo-grid" hx-swap="innerHTML"
@@ -51,7 +51,7 @@
             {# ── Repository Name ── #}
             <td class="py-0.5">
                 <a href="{{ base_path }}/repo/{{ repo.full_name }}" class="link link-hover text-sm"
-                   title="{{ repo.full_name }}">{{ repo.full_name }}</a>
+                   title="{{ repo.full_name }}">{{ repo.name }}</a>
             </td>
 
             {# ── Issues ── #}
