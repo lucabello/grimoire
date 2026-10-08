@@ -1,3 +1,4 @@
+{% from "partials/_workflow_macros.html" import workflow_row %}
 <div class="flex flex-col gap-3">
 {% for repo in repos %}
 <div class="bg-base-100 rounded-lg shadow-sm hover:shadow-md transition-shadow {% if repo.health_status == 'error' %}border-l-4 border-error{% elif repo.health_status == 'warning' %}border-l-4 border-warning{% endif %}">
@@ -54,28 +55,19 @@
         {% if repo.workflows_by_branch or repo.checks_by_branch %}
         <div class="grid grid-cols-1 md:grid-cols-2 gap-x-8 gap-y-2 mt-3">
 
-            {# ── Workflows Column ── #}
+            {# ── Workflows Column (one block per workflow group) ── #}
             <div>
-                {% if repo.workflows_by_branch %}
-                <div class="text-xs font-semibold opacity-50 uppercase tracking-wider mb-1">Workflows</div>
-                {% for branch, workflows in repo.workflows_by_branch.items() %}
+                {% for column in repo.workflow_columns if column.workflows_by_branch %}
+                <div class="text-xs font-semibold opacity-50 uppercase tracking-wider mb-1{% if not loop.first %} mt-2{% endif %}">{{ column.name }}</div>
+                {% for branch, workflows in column.workflows_by_branch.items() %}
                     {% if repo.branches | length > 1 %}
                     <div class="text-xs opacity-40 mt-1 mb-0.5">{{ branch }}</div>
                     {% endif %}
                     {% for wf in workflows %}
-                    <div class="flex items-center gap-2 py-0.5">
-                        <a href="{{ wf.run_url or wf.url }}" target="_blank" rel="noopener" class="flex items-center gap-2 hover:opacity-80">
-                            {% if wf.status == "success" %}<i class="fa-solid fa-check status-icon status-icon-success"></i>
-                            {% elif wf.status == "failure" %}<i class="fa-solid fa-xmark status-icon status-icon-failure"></i>
-                            {% elif wf.status == "pending" %}<i class="fa-solid fa-clock status-icon status-icon-pending"></i>
-                            {% else %}<i class="fa-solid fa-minus status-icon status-icon-unknown"></i>{% endif %}
-                            <span class="text-sm">{{ wf.name }}</span>
-                        </a>
-                        <span class="text-xs opacity-40">{{ wf.status }}</span>
-                    </div>
+                    {{ workflow_row(wf) }}
                     {% endfor %}
                 {% endfor %}
-                {% endif %}
+                {% endfor %}
             </div>
 
             {# ── Checks Column ── #}

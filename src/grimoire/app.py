@@ -54,7 +54,12 @@ from grimoire.observability.logging import setup_logging
 from grimoire.observability.metrics import DATA_REFRESH_DURATION, update_repo_metrics
 from grimoire.observability.metrics import router as metrics_router
 from grimoire.web.router import router as web_router
-from grimoire.web.router import set_backlog_config, set_refresh_schedule, set_staleness_config
+from grimoire.web.router import (
+    set_backlog_config,
+    set_dashboard_config,
+    set_refresh_schedule,
+    set_staleness_config,
+)
 from grimoire.workspace.manager import WorkspaceManager
 
 logger = logging.getLogger(__name__)
@@ -101,6 +106,9 @@ async def lifespan(_app: FastAPI) -> AsyncIterator[None]:
 
     # Expose staleness thresholds to web layer
     set_staleness_config(config.staleness)
+
+    # Expose dashboard config to web layer
+    set_dashboard_config(config.dashboard)
 
     # Expose backlog config to web layer
     set_backlog_config(config.backlog, config_file_path)

@@ -473,3 +473,71 @@ class TestConfigPathResolution:
         assert config.workspace_dir == grimoire_data / "workspace"
         assert config.database_path == grimoire_data / "grimoire.db"
         assert config.log_file == grimoire_data / "grimoire.log"
+
+
+class TestDashboardConfig:
+    def test_defaults(self) -> None:
+        from grimoire.config import DashboardConfig
+
+        config = DashboardConfig()
+        assert config.workflow_groups == []
+        assert config.show_other is True
+
+    def test_parses_groups(self) -> None:
+        from grimoire.config import DashboardConfig
+
+        config = DashboardConfig.model_validate(
+            {"workflow_groups": [{"name": "Release", "match": ["*release*"]}], "show_other": False}
+        )
+        assert config.workflow_groups[0].name == "Release"
+        assert config.show_other is False
+
+    def test_duplicate_names_rejected(self) -> None:
+        import pytest
+        from pydantic import ValidationError
+
+        from grimoire.config import DashboardConfig
+
+        group = {"name": "A", "match": ["x"]}
+        with pytest.raises(ValidationError):
+            DashboardConfig.model_validate({"workflow_groups": [group, group]})
+
+    def test_empty_match_rejected(self) -> None:
+        import pytest
+        from pydantic import ValidationError
+
+        from grimoire.config import DashboardConfig
+
+        with pytest.raises(ValidationError):
+            DashboardConfig.model_validate({"workflow_groups": [{"name": "A", "match": []}]})
+
+    def test_other_name_rejected_when_shown(self) -> None:
+        import pytest
+        from pydantic import ValidationError
+
+        from grimoire.config import DashboardConfig
+
+        with pytest.raises(ValidationError, match="reserved"):
+            DashboardConfig.model_validate(
+                {"workflow_groups": [{"name": "Other", "match": ["x"]}]}
+            )
+
+    def test_other_name_allowed_when_hidden(self) -> None:
+        from grimoire.config import DashboardConfig
+
+        config = DashboardConfig.model_validate(
+            {"workflow_groups": [{"name": "Other", "match": ["x"]}], "show_other": False}
+        )
+        assert config.workflow_groups[0].name == "Other"
+
+    def test_blank_name_rejected(self) -> None:
+        import pytest
+        from pydantic import ValidationError
+
+        from grimoire.config import DashboardConfig
+
+        for name in ("", "   "):
+            with pytest.raises(ValidationError):
+                DashboardConfig.model_validate(
+                    {"workflow_groups": [{"name": name, "match": ["x"]}]}
+                )

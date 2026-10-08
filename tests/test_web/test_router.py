@@ -751,3 +751,100 @@ class TestLoadingState:
             assert resp.status_code == 200
             assert "3 of 7" in resp.text
             assert "HX-Redirect" not in resp.headers
+
+
+class TestWorkflowGroupColumns:
+    """Dashboard renders one column per configured workflow group."""
+
+    async def test_default_single_workflows_column(self, web_client: AsyncClient) -> None:
+        resp = await web_client.get("/partials/dashboard-matrix")
+        assert ">Workflows</th>" in resp.text
+        assert ">Other</th>" not in resp.text
+
+    async def test_group_columns_in_matrix_and_list(self, web_client: AsyncClient) -> None:
+        from grimoire.config import DashboardConfig, WorkflowGroup
+        from grimoire.web import router as web_router
+
+        previous = web_router._dashboard_config
+        web_router.set_dashboard_config(
+            DashboardConfig(workflow_groups=[WorkflowGroup(name="Release", match=["*zzz*"])])
+        )
+        try:
+            matrix = await web_client.get("/partials/dashboard-matrix")
+            listing = await web_client.get("/partials/dashboard-list")
+            repo_page = await web_client.get("/repo/acme/api")
+        finally:
+            web_router.set_dashboard_config(previous)
+        assert ">Release</th>" in matrix.text
+        assert ">Other</th>" in matrix.text
+        assert ">Workflows</th>" not in matrix.text
+        assert ">Other</div>" in listing.text
+        assert repo_page.status_code == 200
+        assert ">Other</div>" in repo_page.text
+
+    async def test_matrix_cells_under_matching_headers(self, web_client: AsyncClient) -> None:
+        import re
+
+        from grimoire.config import DashboardConfig, WorkflowGroup
+        from grimoire.web import router as web_router
+
+        previous = web_router._dashboard_config
+        web_router.set_dashboard_config(
+            DashboardConfig(
+                workflow_groups=[
+                    WorkflowGroup(name="Builds", match=["Build"]),
+                    WorkflowGroup(name="Nightly", match=["zzz"]),
+                ]
+            )
+        )
+        try:
+            resp = await web_client.get("/partials/dashboard-matrix")
+        finally:
+            web_router.set_dashboard_config(previous)
+        text = resp.text
+        assert text.index(">Builds</th>") < text.index(">Nightly</th>") < text.index(">Other</th>")
+        rows = re.findall(r"<tr[^>]*>.*?</tr>", text.split("<tbody", 1)[1], re.S)
+        row_by_repo = {
+            name: row for row in rows for name in ("acme/api", "acme/frontend") if name in row
+        }
+        pattern = r'<td class="text-center py-0.5">(.*?)</td>'
+        frontend = re.findall(pattern, row_by_repo["acme/frontend"], re.S)[-4:-1]
+        api = re.findall(pattern, row_by_repo["acme/api"], re.S)[-4:-1]
+        assert len(frontend) == len(api) == 3
+        assert "Build (main)" in frontend[0]
+        assert "tooltip" not in frontend[1]
+        assert "tooltip" not in frontend[2]
+        assert "tooltip" not in api[0]
+        assert "tooltip" not in api[1]
+        assert "CI (main)" in api[2]
+
+    async def test_show_other_false_hides_unmatched(self, web_client: AsyncClient) -> None:
+        from grimoire.config import DashboardConfig, WorkflowGroup
+        from grimoire.web import router as web_router
+
+        previous = web_router._dashboard_config
+        web_router.set_dashboard_config(
+            DashboardConfig(
+                workflow_groups=[WorkflowGroup(name="Release", match=["Build"])],
+                show_other=False,
+            )
+        )
+        try:
+            matrix = await web_client.get("/partials/dashboard-matrix")
+            listing = await web_client.get("/partials/dashboard-list")
+            repo_page = await web_client.get("/repo/acme/api")
+        finally:
+            web_router.set_dashboard_config(previous)
+        assert ">Other</th>" not in matrix.text
+        assert ">Other</div>" not in listing.text
+        assert ">Other</div>" not in repo_page.text
+        assert "CI (main)" not in matrix.text
+        assert "Build (main)" in matrix.text
+
+    async def test_default_list_and_repo_page_output(self, web_client: AsyncClient) -> None:
+        listing = await web_client.get("/partials/dashboard-list")
+        repo_page = await web_client.get("/repo/acme/api")
+        assert ">Workflows</div>" in listing.text
+        assert ">Other</div>" not in listing.text
+        assert ">Other</div>" not in repo_page.text
+        assert "CI" in repo_page.text
