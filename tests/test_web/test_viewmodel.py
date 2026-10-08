@@ -153,3 +153,11 @@ class TestGroupWorkflows:
             [self._wf("ci", "main"), self._wf("ci", "dev")], DashboardConfig()
         )
         assert list(columns[0].workflows_by_branch) == ["main", "dev"]
+
+    def test_matching_is_case_sensitive(self) -> None:
+        config = DashboardConfig(
+            workflow_groups=[WorkflowGroup(name="Release", match=["*release*"])]
+        )
+        columns = group_workflows([self._wf("Release")], config)
+        assert columns[0].workflows == []
+        assert [w.name for w in columns[1].workflows] == ["Release"]

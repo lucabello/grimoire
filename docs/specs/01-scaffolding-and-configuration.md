@@ -97,7 +97,7 @@ backlog:                        # optional — backlog scoring weights
 dashboard:                      # optional — dashboard presentation
   workflow_groups:              # each group becomes a column; first matching group wins
     - name: "Release"
-      match: ["*release*", "*publish*"]   # fnmatch globs on workflow name
+      match: ["*Release*", "*Publish*"]   # fnmatch globs on workflow name
     - name: "Nightly"
       match: ["nightly*"]
   show_other: true              # default: true — trailing "Other" column for unmatched workflows
@@ -131,8 +131,8 @@ log_file: "./grimoire.log"
 - `BacklogCategoryWeights(failing_workflow: float = 100, failing_check_error: float = 80, failing_check_warning: float = 30, stale_pr: float = 50, stale_issue: float = 20)`
 - `RepositoryWeightRule(regex: str | None = None, repos: list[str] | None = None, weight: float = 1.0)` — exactly one of `regex` or `repos` must be set; rules are evaluated top-to-bottom and the last match wins
 - `BacklogConfig(category_weights: BacklogCategoryWeights = BacklogCategoryWeights(), workflow_weights: dict[str, float] = {}, repository_weights: list[RepositoryWeightRule] = [])` — `workflow_weights` maps glob patterns on workflow name to multipliers; `repository_weights` maps repos to backlog score multipliers and defaults to `1.0` when no rule matches
-- `WorkflowGroup(name: str, match: list[str])` — `match` must be non-empty; glob patterns (fnmatch) on workflow name
-- `DashboardConfig(workflow_groups: list[WorkflowGroup] = [], show_other: bool = True)` — group names must be unique; with no groups, all workflows share one "Workflows" column
+- `WorkflowGroup(name: str, match: list[str])` — `name` must be non-blank (stripped); `match` must be non-empty; case-sensitive glob patterns (`fnmatchcase`) on workflow name
+- `DashboardConfig(workflow_groups: list[WorkflowGroup] = [], show_other: bool = True)` — group names must be unique and, when `show_other` is true, must not be "Other"; with no groups, all workflows share one "Workflows" column
 - `GrimoireConfig` — top-level model; `git: GitConfig | None = None` (optional); `backlog: BacklogConfig = BacklogConfig()` (optional); `dashboard: DashboardConfig = DashboardConfig()` (optional)
 
 ### Config loading

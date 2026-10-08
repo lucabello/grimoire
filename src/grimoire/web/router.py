@@ -5,7 +5,7 @@ from __future__ import annotations
 import re
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
-from fnmatch import fnmatch
+from fnmatch import fnmatchcase
 from importlib.metadata import version
 from pathlib import Path
 from typing import Any
@@ -103,7 +103,11 @@ def group_workflows(
             target = columns[0]
         else:
             group = next(
-                (g for g in config.workflow_groups if any(fnmatch(wf.name, p) for p in g.match)),
+                (
+                    g
+                    for g in config.workflow_groups
+                    if any(fnmatchcase(wf.name, p) for p in g.match)
+                ),
                 None,
             )
             target = by_name[group.name] if group else by_name.get("Other")

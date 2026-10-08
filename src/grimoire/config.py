@@ -9,7 +9,7 @@ from typing import Annotated, Literal, Union
 
 import yaml
 from dataconfy import ConfigManager, DataManager
-from pydantic import BaseModel, Field, model_validator
+from pydantic import BaseModel, Field, field_validator, model_validator
 from typing_extensions import Self
 
 _ENV_VAR_PATTERN = re.compile(r"^\$\{([^}]+)\}$")
@@ -160,8 +160,16 @@ class BacklogConfig(BaseModel):
 class WorkflowGroup(BaseModel):
     """A named dashboard column holding workflows whose name matches any glob pattern."""
 
-    name: str
+    name: str = Field(min_length=1)
     match: list[str] = Field(min_length=1)
+
+    @field_validator("name")
+    @classmethod
+    def name_not_blank(cls, value: str) -> str:
+        value = value.strip()
+        if not value:
+            raise ValueError("Workflow group name must not be blank")
+        return value
 
 
 class DashboardConfig(BaseModel):
@@ -180,6 +188,11 @@ class DashboardConfig(BaseModel):
         names = [group.name for group in self.workflow_groups]
         if len(names) != len(set(names)):
             raise ValueError("Workflow group names must be unique")
+        if self.show_other and "Other" in names:
+            raise ValueError(
+                'Workflow group name "Other" is reserved for the unmatched column; '
+                "rename the group or set show_other to false"
+            )
         return self
 
 

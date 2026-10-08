@@ -202,13 +202,13 @@ backlog:
 
 ### `workflow_groups`
 
-Split CI workflows into separate dashboard columns, for example to make release or nightly pipelines stand out. Each group has a `name` (the column header) and a list of `match` glob patterns tested against the workflow name. The first group that matches wins.
+Split CI workflows into separate dashboard columns, for example to make release or nightly pipelines stand out. Each group has a `name` (the column header) and a list of `match` glob patterns tested against the workflow name. Matching is case-sensitive (`*release*` does not match `Release`). The first group that matches wins.
 
 ```yaml
 dashboard:
   workflow_groups:
     - name: "Release"
-      match: ["*release*", "*publish*"]
+      match: ["*Release*", "*Publish*"]
     - name: "Nightly"
       match: ["nightly*"]
   show_other: true
@@ -216,10 +216,12 @@ dashboard:
 
 | Field | Default | Description |
 |-------|---------|-------------|
-| `workflow_groups` | `[]` | Ordered list of groups. Group names must be unique and `match` must not be empty. |
+| `workflow_groups` | `[]` | Ordered list of groups. Group names must be non-empty and unique, and `match` must not be empty. With `show_other: true`, no group may be named `Other`. |
 | `show_other` | `true` | Show a trailing **Other** column for workflows matching no group. Set to `false` to hide them. |
 
 Without `workflow_groups`, all workflows share a single **Workflows** column. The grouping also applies to the dashboard list view and the repository page.
+
+Hidden workflows (`show_other: false`) are only hidden from display: they still count toward a repository's health status. The matrix has one column per group, so keep the number of groups small.
 
 ---
 
