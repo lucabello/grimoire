@@ -1,5 +1,5 @@
 # Tools and system packages for the Docker image. Copy this file next to your
-# config.yaml (as `mise.toml`) — the container installs everything on start.
+# config.yaml — the container installs everything on start.
 # Reference: https://mise.jdx.dev/configuration.html
 
 [tools]

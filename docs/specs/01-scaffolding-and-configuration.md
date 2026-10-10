@@ -40,7 +40,7 @@ description = "Self-hostable GitHub repository monitoring dashboard"
 
 Parse a YAML configuration file (`config.yaml` by default, overridable via `GRIMOIRE_CONFIG` env var).
 
-**Sibling file:** a `mise.toml` in the same directory as the resolved config file declares the external tools and system packages for the Docker image. It is not read by the Python application — only by `docker-entrypoint.sh` (see Module 7, §7.4). Keeping it beside `config.yaml` keeps all deployment configuration in one directory; `data/` stays reserved for check/action definitions and scripts.
+**Sibling file:** a `mise.toml` in the same directory as the resolved config file declares the external tools and system packages for the Docker image. It is not read by the Python application — only by `docker/entrypoint.sh` (see Module 7, §7.4). Keeping it beside `config.yaml` keeps all deployment configuration in one directory; `data/` stays reserved for check/action definitions and scripts.
 
 ### Config file schema
 
@@ -236,7 +236,7 @@ async def get_session(engine: AsyncEngine) -> AsyncSession: ...
 
 ## 1.5 — Example Config & justfile
 
-- Create `config.yaml.example` with the full schema documented in comments.
+- Create `examples/config.yaml` with the full schema documented in comments.
 - Update `justfile`:
   - `dev` recipe: `uv run uvicorn grimoire.app:create_app --factory --reload --port 8000`
   - `run` recipe: `uv run uvicorn grimoire.app:create_app --factory --port 8000`

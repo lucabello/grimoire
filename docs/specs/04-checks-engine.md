@@ -216,7 +216,7 @@ Failure of either step is non-fatal: the app still starts and affected checks re
 
 For non-Docker deployments, install tools directly on the host.
 
-See Module 7 (§7.4, `docker-entrypoint.sh`) for implementation details and design rationale.
+See Module 7 (§7.4, `docker/entrypoint.sh`) for implementation details and design rationale.
 
 ## 4.6 — Check Scheduling
 

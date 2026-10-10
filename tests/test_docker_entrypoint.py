@@ -1,4 +1,4 @@
-"""Tests for docker-entrypoint.sh (mise + setup script handling)."""
+"""Tests for docker/entrypoint.sh (mise + setup script handling)."""
 
 from __future__ import annotations
 
@@ -9,7 +9,7 @@ from pathlib import Path
 
 import pytest
 
-ENTRYPOINT = Path(__file__).parent.parent / "docker-entrypoint.sh"
+ENTRYPOINT = Path(__file__).parent.parent / "docker" / "entrypoint.sh"
 
 FAKE_MISE = """#!/bin/sh
 echo "mise $*" >> "$CALLS_LOG"

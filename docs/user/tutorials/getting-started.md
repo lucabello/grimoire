@@ -14,7 +14,7 @@ You need:
 ```bash
 git clone https://github.com/lucabello/grimoire.git
 cd grimoire
-cp config.yaml.example config.yaml
+cp examples/config.yaml config.yaml
 ```
 
 Open `config.yaml` and set your token and the repositories you want to monitor:

@@ -53,7 +53,7 @@ node = "22"
 
 Restart the container. On start, Grimoire installs whatever is missing and puts the tools on the `PATH` of every check and action. The first start downloads everything; later starts take a moment because the `grimoire-tools` volume keeps the installs.
 
-A copy of this file with more examples is in the repository as [`mise.toml.example`](https://github.com/lucabello/grimoire/blob/main/mise.toml.example).
+A copy of this file with more examples is in the repository as [`examples/mise.toml`](https://github.com/lucabello/grimoire/blob/main/examples/mise.toml).
 
 ## Where tools come from
 

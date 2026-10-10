@@ -75,9 +75,11 @@ grimoire/
 ├── pyproject.toml
 ├── justfile
 ├── Dockerfile
-├── docker-entrypoint.sh           # Installs mise.toml tools, runs data/setup.sh
-├── config.yaml.example
-├── mise.toml.example              # Tools/packages for the Docker image
+├── docker/
+│   └── entrypoint.sh              # Installs mise.toml tools, runs data/setup.sh
+├── examples/
+│   ├── config.yaml                # Full config schema, documented in comments
+│   └── mise.toml                  # Tools/packages for the Docker image
 └── README.md
 ```
 

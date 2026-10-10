@@ -146,8 +146,7 @@ RUN uv sync --no-dev --frozen
 
 # Copy application
 COPY src/ src/
-COPY docker-entrypoint.sh /usr/local/bin/
-COPY config.yaml.example ./
+COPY docker/entrypoint.sh /usr/local/bin/docker-entrypoint.sh
 
 EXPOSE 8000
 
@@ -158,7 +157,7 @@ ENTRYPOINT ["docker-entrypoint.sh"]
 CMD ["uv", "run", "uvicorn", "grimoire.app:create_app", "--factory", "--host", "0.0.0.0", "--port", "8000"]
 ```
 
-### `docker-entrypoint.sh`
+### `docker/entrypoint.sh`
 
 The entrypoint installs the external tools needed by checks and actions before starting the application. Two mechanisms, in order:
 
@@ -171,7 +170,7 @@ The entrypoint installs the external tools needed by checks and actions before s
 
 Then `exec "$@"`. A failure in any step prints a `WARNING` and continues — the app still starts and affected checks report errors.
 
-Example `mise.toml` (see `mise.toml.example`):
+Example `mise.toml` (see `examples/mise.toml`):
 
 ```toml
 [tools]
