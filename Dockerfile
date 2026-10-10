@@ -18,6 +18,16 @@ RUN curl -fsSL https://cli.github.com/packages/githubcli-archive-keyring.gpg \
 
 COPY --from=ghcr.io/astral-sh/uv:latest /uv /usr/local/bin/uv
 
+# Install mise, used by docker-entrypoint.sh to install the tools declared in
+# mise.toml (next to config.yaml). Tools live on a volume so they survive
+# container re-creation.
+ARG MISE_VERSION=v2026.10.7
+RUN curl -fsSL https://mise.run \
+    | MISE_VERSION="${MISE_VERSION}" MISE_INSTALL_PATH=/usr/local/bin/mise sh
+ENV MISE_DATA_DIR=/app/tools \
+    MISE_YES=1
+VOLUME /app/tools
+
 WORKDIR /app
 
 COPY pyproject.toml uv.lock README.md ./

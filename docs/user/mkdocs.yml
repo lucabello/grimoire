@@ -44,6 +44,7 @@ nav:
   - How-to guides:
       - Write a check: how-to/write-a-check.md
       - Write an action: how-to/write-an-action.md
+      - Install tools for your checks: how-to/install-tools.md
       - Deploy Grimoire: how-to/deploy.md
   - Reference:
       - Configuration: reference/configuration.md

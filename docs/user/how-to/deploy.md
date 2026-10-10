@@ -16,24 +16,30 @@ services:
     ports:
       - "8000:8000"
     volumes:
-      - ./config.yaml:/app/config.yaml:ro
+      - ./config:/app/config:ro
       - ./data:/app/data:ro
+      - grimoire-tools:/app/tools
       - grimoire-workspace:/app/workspace
       - ./state:/app/state
     environment:
       - GITHUB_TOKEN=${GITHUB_TOKEN}
+      - GRIMOIRE_CONFIG=/app/config/config.yaml
     restart: unless-stopped
 
 volumes:
+  grimoire-tools:
   grimoire-workspace:
 ```
+
+Need extra tools such as `jq` or `shellcheck` in your checks? See [Install tools for your checks](install-tools.md).
 
 ### Volume mounts
 
 | Mount | Purpose |
 |-------|---------|
-| `config.yaml` | Configuration file (read-only) |
-| `data/` | Check and action definitions (read-only) |
+| `config/` | Directory with `config.yaml` and an optional `mise.toml` (read-only) |
+| `data/` | Check and action definitions, optional `setup.sh` (read-only) |
+| `tools/` | Tools installed from `mise.toml` (named volume, avoids re-downloads) |
 | `workspace/` | Cloned repos (managed by Grimoire) |
 | `state/` | Database and logs (persistent) |
 
@@ -45,8 +51,10 @@ docker build -t grimoire .
 docker run -d \
   --name grimoire \
   -p 8000:8000 \
-  -v ./config.yaml:/app/config.yaml:ro \
+  -e GRIMOIRE_CONFIG=/app/config/config.yaml \
+  -v ./config:/app/config:ro \
   -v ./data:/app/data:ro \
+  -v grimoire-tools:/app/tools \
   -v grimoire-workspace:/app/workspace \
   --restart unless-stopped \
   grimoire

@@ -207,17 +207,16 @@ async def run_check_for_all_targets(
 | `timestamp` | datetime | When this result was recorded |
 
 ## 4.5 — External Tool Dependencies
+Check scripts may require tools not bundled in the base Docker image (e.g., `charmcraft`, `shellcheck`, Go binaries, custom CLIs). There are two mechanisms, applied in this order by the Docker entrypoint:
 
-Check scripts may require tools not bundled in the base Docker image (e.g., `charmcraft`, Go binaries, custom CLIs). These are installed via a user-provided **setup script**:
+1. **`mise.toml`** (preferred) — placed in the same directory as `config.yaml`. Declares tools (`[tools]`, any [mise backend](https://mise.jdx.dev/dev-tools/backends/): registry, `pipx:`, `npm:`, `github:`, `cargo:`, `go:`, ...) and Debian packages (`[bootstrap.packages]` with `"apt:<pkg>"` keys). Tools are installed to the `/app/tools` volume and put on `PATH` for every check and action.
+2. **`data/setup.sh`** — escape hatch for anything mise cannot express. Runs after mise (so it can use the installed tools) on every container start, so commands must be idempotent.
 
-- Place a `setup.sh` in the `data/` directory (alongside `checks/` and `actions/`).
-- The Docker entrypoint runs `data/setup.sh` on every container start, before grimoire launches.
-- The script can use any installation method: `pip install`, `go install`, `wget` + `chmod`, `apt-get install`, etc.
-- Commands should be idempotent (safe to re-run on each restart).
+Failure of either step is non-fatal: the app still starts and affected checks report errors.
 
-For non-Docker deployments, install tools directly on the host (e.g., `sudo snap install charmcraft --classic`).
+For non-Docker deployments, install tools directly on the host.
 
-See Module 7 (`docker-entrypoint.sh`) for implementation details.
+See Module 7 (§7.4, `docker-entrypoint.sh`) for implementation details and design rationale.
 
 ## 4.6 — Check Scheduling
 

@@ -21,6 +21,8 @@ uv run grimoire --config-file config.mlops.yaml --port 8001
 
 `grimoire --help` lists all options (`--config-file`, `--port`, `--host`).
 
+In Docker, a `mise.toml` in the same directory as the config file declares extra tools for your checks. See [Install tools for your checks](../how-to/install-tools.md).
+
 ---
 
 ## `github` {: #github }

@@ -1,5 +1,6 @@
 # Grimoire-specific files
 config.yaml
+/config/
 grimoire.db
 grimoire-*.db
 grimoire-*.log

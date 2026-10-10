@@ -13,7 +13,7 @@ Grimoire is a self-hostable web application for monitoring GitHub repositories. 
 | Scheduling | APScheduler (v3) | In-process cron, stable, SQLite job store |
 | GitHub API | httpx (async) | Lightweight, async-native HTTP client |
 | Observability | prometheus-client + opentelemetry-sdk | Standard tooling |
-| Deployment | Docker | Bundles system deps (git, gh, gpg, ssh) |
+| Deployment | Docker | Bundles system deps (git, gh, gpg, ssh) and mise for user-declared tools |
 | Command runner | just | Already in project |
 
 ## Project Structure
@@ -75,7 +75,9 @@ grimoire/
 ├── pyproject.toml
 ├── justfile
 ├── Dockerfile
+├── docker-entrypoint.sh           # Installs mise.toml tools, runs data/setup.sh
 ├── config.yaml.example
+├── mise.toml.example              # Tools/packages for the Docker image
 └── README.md
 ```
 

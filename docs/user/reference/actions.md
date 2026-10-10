@@ -65,7 +65,7 @@ Works identically to [checks targeting](checks.md#target-spec). Exactly one of `
 | `DEFAULT_BRANCH` | Default branch of the repository |
 | `GH_TOKEN` / `GITHUB_TOKEN` | GitHub token (for `gh` CLI) |
 
-The `gh` CLI is pre-installed in the Docker image.
+The `gh` CLI is pre-installed in the Docker image. For other tools, see [Install tools for your checks](../how-to/install-tools.md).
 
 ## Concurrency
 

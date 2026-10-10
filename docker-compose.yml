@@ -3,11 +3,16 @@ services:
     build: .
     ports:
       - "8000:8000"
+    environment:
+      # config.yaml and (optionally) mise.toml live in ./config
+      GRIMOIRE_CONFIG: /app/config/config.yaml
     volumes:
-      - ./config.yaml:/app/config.yaml:ro
+      - ./config:/app/config:ro
       - ./data:/app/data:ro
+      - grimoire-tools:/app/tools
       - grimoire-workspace:/app/workspace
       - ./state:/app/state
 
 volumes:
   grimoire-workspace:
+  grimoire-tools:

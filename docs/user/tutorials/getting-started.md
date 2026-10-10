@@ -56,9 +56,10 @@ repositories:
 
 === "Docker Compose"
 
-    For a containerised deployment:
+    For a containerised deployment. The bundled `docker-compose.yml` reads its configuration from a `config/` directory, so move the file there first:
 
     ```bash
+    mkdir -p config && mv config.yaml config/
     export GITHUB_TOKEN="ghp_your_token_here"
     docker compose up -d
     ```
