@@ -22,8 +22,10 @@ run:
 [group("run")]
 docker-run:
     docker run -p 8000:8000 \
-      -v ./config.yaml:/app/config.yaml:ro \
+      -e GRIMOIRE_CONFIG=/app/config/config.yaml \
+      -v ./config:/app/config:ro \
       -v ./data:/app/data:ro \
+      -v grimoire-tools:/app/tools \
       grimoire
 
 # ============================================================================

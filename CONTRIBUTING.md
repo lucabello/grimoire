@@ -21,7 +21,7 @@ cd grimoire
 just venv
 
 # Copy and edit the config
-cp config.yaml.example config.yaml
+cp examples/config.yaml config.yaml
 
 # Run in dev mode (auto-reload)
 just dev
