@@ -42,6 +42,7 @@ dev = [
     "respx>=0.22",
     "actionlint-py>=1.7.10.24",
     "uv-secure>=0.15.4",
+    "psutil>=7.2.2",
 ]
 docs = [
     "mkdocs-material>=9.6",

@@ -1,6 +1,8 @@
 services:
   grimoire:
     build: .
+    # tini as PID 1 reaps orphaned grandchildren of check/action scripts
+    init: true
     ports:
       - "8000:8000"
     environment:

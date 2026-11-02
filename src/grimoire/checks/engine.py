@@ -15,7 +15,7 @@ from sqlmodel.ext.asyncio.session import AsyncSession
 from grimoire.database import CheckResultRecord, CheckRunRecord
 from grimoire.models import CheckResult
 from grimoire.observability.metrics import update_check_metrics
-from grimoire.script import create_script_process
+from grimoire.script import create_script_process, kill_process
 from grimoire.targeting import resolve_targets, target_env
 
 if TYPE_CHECKING:
@@ -110,13 +110,12 @@ async def run_check(
     except asyncio.TimeoutError:
         output = f"Timed out after {_DEFAULT_TIMEOUT}s"
         passed = False
-        if proc is not None:
-            proc.kill()
-            await proc.wait()
     except OSError as exc:
         output = f"Failed to execute: {exc}"
         passed = False
     finally:
+        if proc is not None:
+            await kill_process(proc)
         if tmp_script is not None:
             tmp_script.unlink(missing_ok=True)
         shutil.rmtree(tmpdir, ignore_errors=True)

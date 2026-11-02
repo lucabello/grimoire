@@ -398,3 +398,25 @@ class TestResetWorkdir:
         assert dev_result.exists()
         assert (main_result / "README.md").exists()
         assert (dev_result / "dev.txt").exists()
+
+
+async def test_run_git_cancellation_reaps_child(tmp_path: Path, monkeypatch) -> None:
+    """Cancelling a git call must not leave git running or defunct."""
+    import psutil
+
+    fake_git = tmp_path / "bin" / "git"
+    fake_git.parent.mkdir()
+    fake_git.write_text("#!/bin/sh\nexec sleep 60\n")
+    fake_git.chmod(0o755)
+    monkeypatch.setenv("PATH", f"{fake_git.parent}:{os.environ['PATH']}")
+
+    manager = WorkspaceManager(_minimal_config(tmp_path / "ws"))
+    for _ in range(5):
+        task = asyncio.create_task(manager._run_git("status", cwd=tmp_path))
+        await asyncio.sleep(0.2)
+        task.cancel()
+        try:
+            await task
+        except asyncio.CancelledError:
+            pass
+    assert psutil.Process().children(recursive=True) == []
