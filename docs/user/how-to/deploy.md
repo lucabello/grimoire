@@ -13,6 +13,9 @@ services:
     build: .
     # Or use a pre-built image:
     # image: ghcr.io/lucabello/grimoire:latest
+    # Run tini as PID 1 so orphaned child processes of check/action scripts
+    # are reaped instead of piling up as zombies.
+    init: true
     ports:
       - "8000:8000"
     volumes:

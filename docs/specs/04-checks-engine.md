@@ -171,6 +171,7 @@ async def run_check_for_all_targets(
 **Subprocess execution details:**
 - Scripts that begin with a shebang (`#!`) line are written to a temporary file, made executable, and run directly via `create_subprocess_exec` so the OS honors the interpreter (e.g. `#!/usr/bin/env bash`, `#!/usr/bin/env python3`). The temp file is cleaned up after execution.
 - Scripts without a shebang are passed to `/bin/sh` via `create_subprocess_shell` (scripts may use pipes, conditionals, etc.).
+- Scripts run in their own session (`start_new_session=True`). In a `finally`, callers invoke `grimoire.script.kill_process()`, which SIGKILLs the process group (if still running) and awaits `proc.wait()`, so timeouts and cancellation never strand or leave unreaped children.
 - Set `cwd` to the workdir path.
 - Build the environment with `target_env(workspace, repo, branch)` (workspace env vars + `REPO_OWNER`/`REPO_NAME`/`REPO_FULL_NAME`/`BRANCH`/`DEFAULT_BRANCH`).
 - Capture stdout and stderr together (combined stream).
