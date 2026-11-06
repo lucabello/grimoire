@@ -23,6 +23,7 @@ description = "Self-hostable GitHub repository monitoring dashboard"
 - `pyyaml` — YAML config parsing
 - `pydantic` — config validation
 - `sqlmodel` — ORM (SQLAlchemy + Pydantic)
+- `sqlalchemy[asyncio]` — declared directly because the app uses SQLAlchemy's async API (pulls in `greenlet`)
 - `aiosqlite` — async SQLite driver
 - `alembic` — schema migrations
 - `apscheduler` (v3) — task scheduling

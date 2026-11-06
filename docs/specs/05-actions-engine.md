@@ -54,8 +54,8 @@ A **global** action (no targets — runs once, not per-repo):
 
 ```yaml
 # data/actions/example-global.yaml
-name: "Rerun Failed PR Workflows"
-description: "Reruns failed CI on open PRs by specified authors"
+name: "Example Global Action"
+description: "Runs a script once, not per repository"
 script: |
   echo "Running globally..."
 schedule: "0 */3 * * *"
