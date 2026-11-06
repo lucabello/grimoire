@@ -349,6 +349,40 @@ async def test_save_and_load_stats(engine: AsyncEngine) -> None:
     assert loaded_stats[0].last_commit_at is not None
 
 
+async def test_workflow_run_details_survive_cache_round_trip(engine: AsyncEngine) -> None:
+    repos = [TrackedRepository(full_name="owner/repo1", default_branch="main", branches=["main"])]
+    finished = WorkflowStatus(
+        name="CI",
+        branch="main",
+        status="failure",
+        url="https://github.com/wf/1",
+        run_url="https://github.com/run/1",
+        run_id=1,
+        run_attempt=2,
+        event="push",
+        head_sha="c" * 40,
+        conclusion="cancelled",
+        created_at=datetime(2026, 3, 1, 10, 0, tzinfo=UTC),
+        run_started_at=datetime(2026, 3, 1, 10, 0, 5, tzinfo=UTC),
+        updated_at=datetime(2026, 3, 1, 10, 5, tzinfo=UTC),
+    )
+    in_progress = finished.model_copy(
+        update={"name": "Build", "run_id": 2, "run_attempt": 1, "conclusion": None}
+    )
+    legacy = WorkflowStatus(name="Old", branch="main", status="unknown", url="")
+    stats = RepositoryStats(
+        full_name="owner/repo1",
+        default_branch="main",
+        workflows=[finished, in_progress, legacy],
+        fetched_at=datetime.now(UTC),
+    )
+
+    await save_stats_to_db(engine, [stats], repos)
+    _, loaded = await load_stats_from_db(engine)
+
+    assert loaded[0].workflows == [finished, in_progress, legacy]
+
+
 async def test_save_replaces_old_data(engine: AsyncEngine) -> None:
     """Saving twice should replace, not duplicate, cached records."""
     repos = [TrackedRepository(full_name="owner/repo1", default_branch="main", branches=["main"])]
@@ -478,6 +512,14 @@ async def test_workflow_runs_304_preserves_previous_status(client: GitHubClient)
                 status="success",
                 url="https://github.com/wf",
                 run_url="https://github.com/run/1",
+                run_id=1,
+                run_attempt=3,
+                event="schedule",
+                head_sha="a" * 40,
+                conclusion="success",
+                created_at=datetime(2026, 1, 1, 10, 0, tzinfo=UTC),
+                run_started_at=datetime(2026, 1, 1, 10, 1, tzinfo=UTC),
+                updated_at=datetime(2026, 1, 1, 10, 5, tzinfo=UTC),
             )
         ],
     )
@@ -488,6 +530,191 @@ async def test_workflow_runs_304_preserves_previous_status(client: GitHubClient)
     assert len(stats.workflows) == 1
     assert stats.workflows[0].name == "CI"
     assert stats.workflows[0].status == "success"
+    assert stats.workflows[0] == previous.workflows[0]
+
+
+@respx.mock
+async def test_workflow_listing_failure_preserves_previous_run_details(
+    client: GitHubClient,
+) -> None:
+    """A failed workflow listing keeps the previous statuses, run details included."""
+    _mock_repo_routes_without_workflows()
+    respx.get("https://api.github.com/repos/owner/repo1/actions/workflows").mock(
+        return_value=httpx.Response(500, headers=_rl_headers())
+    )
+
+    repo = TrackedRepository(full_name="owner/repo1", default_branch="main", branches=["main"])
+    previous_wf = WorkflowStatus(
+        name="CI",
+        branch="main",
+        status="failure",
+        url="https://github.com/wf",
+        run_id=7,
+        run_attempt=2,
+        event="push",
+        head_sha="b" * 40,
+        conclusion="timed_out",
+        created_at=datetime(2026, 1, 1, 10, 0, tzinfo=UTC),
+        run_started_at=datetime(2026, 1, 1, 10, 1, tzinfo=UTC),
+        updated_at=datetime(2026, 1, 1, 10, 5, tzinfo=UTC),
+    )
+    previous = RepositoryStats(
+        full_name="owner/repo1", default_branch="main", workflows=[previous_wf]
+    )
+    stats = await fetch_repository_stats(repo, client, StalenessConfig(), previous=previous)
+
+    assert stats.workflows == [previous_wf]
+    assert any("Could not fetch workflows" in w for w in stats.warnings)
+
+
+def _run_payload(run_id: int, conclusion: str | None, **overrides: object) -> dict[str, object]:
+    """A GitHub workflow run object as returned by the runs endpoint."""
+    payload: dict[str, object] = {
+        "id": run_id,
+        "status": "completed" if conclusion else "in_progress",
+        "conclusion": conclusion,
+        "html_url": f"https://github.com/run/{run_id}",
+        "head_branch": "main",
+        "head_sha": f"{run_id:040d}",
+        "event": "push",
+        "run_attempt": 1,
+        "created_at": "2026-03-01T10:00:00Z",
+        "run_started_at": "2026-03-01T10:00:05Z",
+        "updated_at": "2026-03-01T10:05:00Z",
+    }
+    payload.update(overrides)
+    return payload
+
+
+def _mock_repo_routes_without_workflows() -> None:
+    respx.get("https://api.github.com/repos/owner/repo1/issues").mock(
+        return_value=httpx.Response(200, json=[], headers=_rl_headers())
+    )
+    respx.get("https://api.github.com/repos/owner/repo1/pulls").mock(
+        return_value=httpx.Response(200, json=[], headers=_rl_headers())
+    )
+    respx.get("https://api.github.com/repos/owner/repo1/branches/main").mock(
+        return_value=httpx.Response(
+            200,
+            json={
+                "name": "main",
+                "commit": {
+                    "sha": "abc",
+                    "commit": {"committer": {"date": datetime.now(UTC).isoformat()}},
+                },
+            },
+            headers=_rl_headers(),
+        )
+    )
+    respx.get("https://api.github.com/repos/owner/repo1/branches").mock(
+        return_value=httpx.Response(200, json=[], headers=_rl_headers())
+    )
+
+
+@respx.mock
+async def test_workflow_status_keeps_run_details(client: GitHubClient) -> None:
+    """Run id, attempt, event, SHA, raw conclusion and timestamps come from the run;
+    `status` keeps its coarse mapping and no extra GitHub requests are made."""
+    _mock_repo_routes_without_workflows()
+    respx.get("https://api.github.com/repos/owner/repo1/actions/workflows").mock(
+        return_value=httpx.Response(
+            200,
+            json={
+                "total_count": 3,
+                "workflows": [
+                    {"id": 1, "name": "CI", "html_url": "https://github.com/wf/1"},
+                    {"id": 2, "name": "Nightly", "html_url": "https://github.com/wf/2"},
+                    {"id": 3, "name": "Build", "html_url": "https://github.com/wf/3"},
+                ],
+            },
+            headers=_rl_headers(),
+        )
+    )
+    runs = {
+        1: _run_payload(101, "cancelled", run_attempt=2, event="pull_request"),
+        2: _run_payload(102, "timed_out", event="schedule"),
+        3: _run_payload(103, None, run_started_at="2026-03-01T10:00:07Z"),
+    }
+    routes = {
+        wf_id: respx.get(
+            f"https://api.github.com/repos/owner/repo1/actions/workflows/{wf_id}/runs"
+        ).mock(
+            return_value=httpx.Response(
+                200,
+                json={"total_count": 1, "workflow_runs": [run]},
+                headers=_rl_headers(),
+            )
+        )
+        for wf_id, run in runs.items()
+    }
+
+    repo = TrackedRepository(full_name="owner/repo1", default_branch="main", branches=["main"])
+    stats = await fetch_repository_stats(repo, client, StalenessConfig())
+
+    by_name = {w.name: w for w in stats.workflows}
+    ci = by_name["CI"]
+    assert (ci.status, ci.conclusion) == ("failure", "cancelled")
+    assert ci.run_id == 101
+    assert ci.run_attempt == 2
+    assert ci.event == "pull_request"
+    assert ci.head_sha == f"{101:040d}"
+    assert ci.created_at == datetime(2026, 3, 1, 10, 0, tzinfo=UTC)
+    assert ci.run_started_at == datetime(2026, 3, 1, 10, 0, 5, tzinfo=UTC)
+    assert ci.updated_at == datetime(2026, 3, 1, 10, 5, tzinfo=UTC)
+
+    nightly = by_name["Nightly"]
+    assert (nightly.status, nightly.conclusion) == ("failure", "timed_out")
+    assert nightly.event == "schedule"
+
+    # In progress: no conclusion yet, everything else populated.
+    build = by_name["Build"]
+    assert (build.status, build.conclusion) == ("pending", None)
+    assert build.run_id == 103
+    assert build.run_attempt == 1
+    assert build.run_started_at == datetime(2026, 3, 1, 10, 0, 7, tzinfo=UTC)
+
+    # Request count unchanged: branch-scoped call plus the default-branch unscoped call.
+    for route in routes.values():
+        assert len(route.calls) == 2
+        assert route.calls[0].request.url.params["per_page"] == "1"
+        assert route.calls[1].request.url.params["per_page"] == "10"
+
+
+@respx.mock
+async def test_workflow_status_run_details_follow_selected_unscoped_run(
+    client: GitHubClient,
+) -> None:
+    """When the newer unscoped run wins, the run details come from it, not the branch match."""
+    _mock_repo_routes_without_workflows()
+    respx.get("https://api.github.com/repos/owner/repo1/actions/workflows").mock(
+        return_value=httpx.Response(
+            200,
+            json={
+                "total_count": 1,
+                "workflows": [{"id": 42, "name": "Release", "html_url": "https://github.com/wf"}],
+            },
+            headers=_rl_headers(),
+        )
+    )
+    old = _run_payload(100, "failure", created_at="2025-10-13T08:29:41Z", run_attempt=3)
+    new = _run_payload(
+        999, "success", head_branch="v4.1.3", event="release", created_at="2026-08-12T13:47:32Z"
+    )
+    route = respx.get("https://api.github.com/repos/owner/repo1/actions/workflows/42/runs")
+    route.side_effect = [
+        httpx.Response(200, json={"workflow_runs": [old]}, headers=_rl_headers()),
+        httpx.Response(200, json={"workflow_runs": [new]}, headers=_rl_headers()),
+    ]
+
+    repo = TrackedRepository(full_name="owner/repo1", default_branch="main", branches=["main"])
+    stats = await fetch_repository_stats(repo, client, StalenessConfig())
+
+    (wf,) = stats.workflows
+    assert wf.run_id == 999
+    assert wf.run_attempt == 1
+    assert wf.event == "release"
+    assert wf.conclusion == "success"
+    assert wf.created_at == datetime(2026, 8, 12, 13, 47, 32, tzinfo=UTC)
 
 
 def _rl_headers() -> dict[str, str]:

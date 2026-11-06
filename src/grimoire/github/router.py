@@ -112,6 +112,14 @@ async def get_repo_detail(owner: str, name: str) -> RepoDetailResponse:
                 status=w.status,
                 url=w.url,
                 run_url=w.run_url,
+                run_id=w.run_id,
+                run_attempt=w.run_attempt,
+                event=w.event,
+                head_sha=w.head_sha,
+                conclusion=w.conclusion,
+                created_at=w.created_at,
+                run_started_at=w.run_started_at,
+                updated_at=w.updated_at,
             )
             for w in stats.workflows
         ],

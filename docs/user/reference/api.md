@@ -10,6 +10,23 @@ Grimoire exposes a REST API. Interactive documentation is available at `/docs` (
 | `GET` | `/api/repos/{owner}/{name}` | Detailed stats for one repo |
 | `POST` | `/api/refresh` | Trigger an immediate data refresh |
 
+### Workflow fields
+
+Each entry in the `workflows` list of `GET /api/repos/{owner}/{name}` describes the latest run of one workflow on one tracked branch:
+
+| Field | Description |
+|-------|-------------|
+| `name`, `branch`, `url`, `run_url` | Workflow name, branch, workflow page and run page |
+| `status` | `success`, `failure`, `pending` or `unknown`. `cancelled` and `timed_out` runs report `failure` |
+| `conclusion` | Raw GitHub conclusion (`success`, `failure`, `cancelled`, `timed_out`, ...); `null` while the run is in progress |
+| `run_id` | GitHub run ID |
+| `run_attempt` | Attempt number of the run (`1` for the first attempt, higher after re-runs) |
+| `event` | Event that triggered the run, for example `push`, `schedule` or `release` |
+| `head_sha` | Commit the run executed on |
+| `created_at`, `run_started_at`, `updated_at` | Run timestamps in ISO 8601 (UTC) |
+
+The run fields are `null` when no value is available.
+
 ## Checks
 
 | Method | Path | Description |

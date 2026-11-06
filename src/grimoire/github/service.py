@@ -364,6 +364,14 @@ async def fetch_repository_stats(
                                     status=status_str,
                                     url=wf.get("html_url", ""),
                                     run_url=run.get("html_url", ""),
+                                    run_id=run.get("id"),
+                                    run_attempt=run.get("run_attempt"),
+                                    event=run.get("event"),
+                                    head_sha=run.get("head_sha"),
+                                    conclusion=run.get("conclusion"),
+                                    created_at=_parse_dt(run.get("created_at")),
+                                    run_started_at=_parse_dt(run.get("run_started_at")),
+                                    updated_at=_parse_dt(run.get("updated_at")),
                                 )
                             )
                         elif runs is None:
@@ -457,6 +465,13 @@ def _parse_dt(value: str | None) -> datetime | None:
         return datetime.fromisoformat(value.replace("Z", "+00:00"))
     except (ValueError, AttributeError):
         return None
+
+
+def _as_utc(value: datetime | None) -> datetime | None:
+    """SQLite drops tzinfo; restore UTC so cached values serialise like fresh ones."""
+    if value is not None and value.tzinfo is None:
+        return value.replace(tzinfo=UTC)
+    return value
 
 
 def _run_created_at(run: dict[str, Any]) -> datetime:
@@ -625,6 +640,14 @@ async def save_stats_to_db(
                         status=wf.status,
                         url=wf.url,
                         run_url=wf.run_url,
+                        run_id=wf.run_id,
+                        run_attempt=wf.run_attempt,
+                        event=wf.event,
+                        head_sha=wf.head_sha,
+                        conclusion=wf.conclusion,
+                        run_created_at=wf.created_at,
+                        run_started_at=wf.run_started_at,
+                        run_updated_at=wf.updated_at,
                         fetched_at=stats.fetched_at or now,
                     )
                 )
@@ -703,6 +726,14 @@ async def load_stats_from_db(
                     status=w.status,
                     url=w.url,
                     run_url=w.run_url,
+                    run_id=w.run_id,
+                    run_attempt=w.run_attempt,
+                    event=w.event,
+                    head_sha=w.head_sha,
+                    conclusion=w.conclusion,
+                    created_at=_as_utc(w.run_created_at),
+                    run_started_at=_as_utc(w.run_started_at),
+                    updated_at=_as_utc(w.run_updated_at),
                 )
                 for w in wf_rows
             ]

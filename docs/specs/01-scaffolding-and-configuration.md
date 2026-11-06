@@ -173,6 +173,15 @@ class WorkflowStatus(BaseModel):
     branch: str
     status: str             # "success" | "failure" | "pending" | "unknown"
     url: str
+    run_url: str = ""
+    run_id: int | None = None
+    run_attempt: int | None = None
+    event: str | None = None
+    head_sha: str | None = None
+    conclusion: str | None = None   # raw GitHub conclusion; None while in progress
+    created_at: datetime | None = None
+    run_started_at: datetime | None = None
+    updated_at: datetime | None = None
 
 class RepositoryStats(BaseModel):
     full_name: str
@@ -223,7 +232,7 @@ SQLModel table models for persistent state:
 | `CachedRepository` | Cached repo metadata (full_name, default_branch, source, fetched_at) |
 | `CachedIssue` | Cached open issues (repo, title, number, url, timestamps, fetched_at) |
 | `CachedPullRequest` | Cached open PRs (repo, title, number, url, author, timestamps, fetched_at) |
-| `CachedWorkflowStatus` | Cached workflow statuses (repo, name, branch, status, url, fetched_at) |
+| `CachedWorkflowStatus` | Cached workflow statuses (repo, name, branch, status, url, run_url, last-run details, fetched_at) |
 | `CachedETag` | GitHub API ETags for conditional requests (endpoint, etag, last_modified) |
 
 **Functions to provide:**
