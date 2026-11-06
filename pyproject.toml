@@ -17,6 +17,7 @@ dependencies = [
     "pyyaml>=6.0",
     "pydantic>=2.10",
     "sqlmodel>=0.0.22",
+    "sqlalchemy[asyncio]>=2.0",
     "aiosqlite>=0.21",
     "apscheduler>=3.11,<4",
     "prometheus-client>=0.22",
