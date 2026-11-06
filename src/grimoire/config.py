@@ -9,7 +9,7 @@ from typing import Annotated, Literal, Union
 
 import yaml
 from dataconfy import ConfigManager, DataManager
-from pydantic import BaseModel, Field, field_validator, model_validator
+from pydantic import BaseModel, Field, ValidationInfo, field_validator, model_validator
 from typing_extensions import Self
 
 _ENV_VAR_PATTERN = re.compile(r"^\$\{([^}]+)\}$")
@@ -196,6 +196,80 @@ class DashboardConfig(BaseModel):
         return self
 
 
+def _clean_value(value: str, field: str) -> str:
+    value = value.strip()
+    if not value:
+        raise ValueError(f"Maintenance group '{field}' values must not be blank")
+    if '"' in value:
+        raise ValueError(f"Maintenance group '{field}' values must not contain double quotes")
+    return value
+
+
+class MaintenanceGroup(BaseModel):
+    """A named set of pull-request matchers turned into a GitHub search query.
+
+    Values of one list matcher are alternatives (OR); different matchers combine with AND.
+    ``repos`` is an optional scope: fnmatch patterns on the tracked repository full names
+    (all tracked repositories when empty).
+    """
+
+    name: str
+    authors: list[str] = Field(default_factory=list)
+    labels: list[str] = Field(default_factory=list)
+    title_words: list[str] = Field(default_factory=list)
+    draft: bool | None = None
+    base: str | None = None
+    status: Literal["success", "failure", "pending"] | None = None
+    repos: list[str] = Field(default_factory=list)
+
+    @field_validator("name")
+    @classmethod
+    def name_not_blank(cls, value: str) -> str:
+        value = value.strip()
+        if not value:
+            raise ValueError("Maintenance group name must not be blank")
+        return value
+
+    @field_validator("base")
+    @classmethod
+    def base_valid(cls, value: str | None) -> str | None:
+        return None if value is None else _clean_value(value, "base")
+
+    @field_validator("authors", "labels", "title_words", "repos")
+    @classmethod
+    def entries_valid(cls, values: list[str], info: ValidationInfo) -> list[str]:
+        return [_clean_value(value, str(info.field_name)) for value in values]
+
+    @model_validator(mode="after")
+    def at_least_one_matcher(self) -> Self:
+        if not (
+            self.authors
+            or self.labels
+            or self.title_words
+            or self.draft is not None
+            or self.base is not None
+            or self.status is not None
+        ):
+            raise ValueError(
+                f"Maintenance group '{self.name}' needs at least one matcher: "
+                "authors, labels, title_words, draft, base or status"
+            )
+        return self
+
+
+class MaintenanceConfig(BaseModel):
+    """Maintenance PR groups; each one links to a GitHub pull-request search."""
+
+    groups: list[MaintenanceGroup] = Field(default_factory=list)
+
+    @model_validator(mode="after")
+    def unique_group_names(self) -> Self:
+        names = [group.name for group in self.groups]
+        if len(names) != len(set(names)):
+            raise ValueError("Maintenance group names must be unique")
+        return self
+
+
 def _default_data_dir() -> Path:
     return _get_data_manager().data_dir / "data"
 
@@ -223,6 +297,7 @@ class GrimoireConfig(BaseModel):
     staleness: StalenessConfig = Field(default_factory=StalenessConfig)
     backlog: BacklogConfig = Field(default_factory=BacklogConfig)
     dashboard: DashboardConfig = Field(default_factory=DashboardConfig)
+    maintenance: MaintenanceConfig = Field(default_factory=MaintenanceConfig)
     refresh_schedule: str = "*/5 * * * *"
 
     data_dir: Path = Field(default_factory=_default_data_dir)

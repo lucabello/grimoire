@@ -49,6 +49,8 @@ from grimoire.github.service import (
     prune_stale_data,
     refresh_all_stats,
 )
+from grimoire.maintenance import router as maintenance_router
+from grimoire.maintenance import set_maintenance_config
 from grimoire.models import TrackedRepository
 from grimoire.observability.logging import setup_logging
 from grimoire.observability.metrics import DATA_REFRESH_DURATION, update_repo_metrics
@@ -109,6 +111,9 @@ async def lifespan(_app: FastAPI) -> AsyncIterator[None]:
 
     # Expose dashboard config to web layer
     set_dashboard_config(config.dashboard)
+
+    # Expose maintenance groups to the API and web layer
+    set_maintenance_config(config.maintenance)
 
     # Expose backlog config to web layer
     set_backlog_config(config.backlog, config_file_path)
@@ -299,6 +304,7 @@ def create_app() -> FastAPI:
     app.include_router(refresh_router, prefix="/api")
     app.include_router(checks_router, prefix="/api")
     app.include_router(actions_router, prefix="/api")
+    app.include_router(maintenance_router, prefix="/api")
 
     # Observability
     app.include_router(metrics_router)

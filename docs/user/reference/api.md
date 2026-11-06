@@ -46,6 +46,43 @@ The run fields are `null` when no value is available.
 | `GET` | `/api/actions/{slug}/runs/{id}` | Specific run details + logs |
 | `POST` | `/api/actions/{slug}/run` | Trigger action; optional `?repo=owner/name`; 409 if running |
 
+## Maintenance
+
+| Method | Path | Description |
+|--------|------|-------------|
+| `GET` | `/api/maintenance/groups` | GitHub PR search `query` and `url` for each [maintenance group](configuration.md#maintenance) |
+
+The endpoint only reads the configuration and the tracked repositories: it makes no GitHub request. It returns one item per search, in configuration order:
+
+```json
+[
+  {
+    "name": "renovate",
+    "query": "is:pr is:open (repo:org/api OR repo:org/web) author:app/renovate",
+    "url": "https://github.com/pulls?q=is%3Apr+is%3Aopen+%28repo%3Aorg%2Fapi+OR+repo%3Aorg%2Fweb%29+author%3Aapp%2Frenovate",
+    "part": 1,
+    "parts": 1
+  }
+]
+```
+
+A group with very many repositories is split into several items with the same `name` (`part` of `parts`); a group with no tracked repository in scope has no item.
+
+To run a query yourself, use GitHub's advanced search (the queries contain `OR` in parentheses). The REST call with `advanced_search=true` is the recommended way; run it once for every part of a split group:
+
+```bash
+gh api -X GET search/issues -f advanced_search=true -f q="$query" --jq .total_count
+gh api -X GET search/issues -f advanced_search=true -f q="$query" -f per_page=100 --paginate --jq '.items[].html_url'
+```
+
+Search returns at most 1000 results, 100 per page (GitHub's documented limits).
+
+Other `gh` commands are not reliable for these queries. Verified on `gh` 2.46.0, read-only:
+
+- `gh search prs "$query"` (the whole query as one argument) sends it as a single quoted term and silently returns no results. The same was observed on `gh` 2.103.3.
+- `gh search prs -- $query` (the query split into words) fails with a 422 on 2.46.0, because that command cannot select the advanced engine. It works only on a recent `gh` (observed on 2.103.3).
+- `gh pr list --search "$query"` works per repository only. On 2.46.0 a parenthesised `OR` over qualifiers such as `author:` or `draft:` silently returned 0 results; it is evaluated on 2.103.3. Do not rely on it with an older `gh`.
+
 ## Health
 
 | Method | Path | Description |

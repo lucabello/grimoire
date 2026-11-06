@@ -1,0 +1,56 @@
+{% extends "base.html" %}
+{% block title %}Maintenance — Grimoire{% endblock %}
+{% block nav_maintenance %}active{% endblock %}
+{% block content %}
+<h1 class="text-3xl font-bold mb-2">Maintenance</h1>
+<p class="text-sm opacity-60 mb-6">
+    Each group is a GitHub pull-request search over the repositories Grimoire tracks.
+    Grimoire only builds the query — the pull requests are listed on GitHub.
+</p>
+
+{% if groups %}
+<p class="text-xs opacity-60 mb-3" id="maintenance-caveat">
+    Unverified: github.com may not apply the parenthesised <code>OR</code> syntax of a multi-value link on the pull requests page. Open one such link to check the result before relying on it.
+</p>
+<div class="flex flex-col gap-3">
+    {% for group in groups %}
+    <div class="bg-base-100 rounded-lg shadow-sm px-5 py-4" id="maintenance-group-{{ loop.index }}">
+        <h3 class="text-base font-semibold">{{ group.name }}</h3>
+        <div class="flex flex-wrap items-center gap-2 mt-1.5 text-sm">
+            {% for label, value in group.matchers %}
+            <span class="badge badge-outline gap-1"><span class="opacity-60">{{ label }}</span> {{ value }}</span>
+            {% endfor %}
+            <span class="opacity-30">│</span>
+            <span class="opacity-60">repos: {{ group.scope }}</span>
+        </div>
+
+        {% for search in group.searches %}
+        <div class="flex items-start gap-4 mt-3">
+            <div class="flex-1 min-w-0">
+                {% if search.parts > 1 %}
+                <div class="text-xs opacity-50 mb-1">Part {{ search.part }} of {{ search.parts }}</div>
+                {% endif %}
+                <code class="block text-xs font-mono break-words opacity-70">{{ search.query }}</code>
+            </div>
+            <a href="{{ search.url }}" target="_blank" rel="noopener noreferrer" class="btn btn-outline btn-sm gap-2 shrink-0">
+                <i class="fa-brands fa-github"></i> Open on GitHub
+            </a>
+        </div>
+        {% else %}
+        <p class="text-sm opacity-60 mt-3">No tracked repository is in scope for this group yet.</p>
+        {% endfor %}
+    </div>
+    {% endfor %}
+</div>
+{% else %}
+<div class="hero min-h-[20vh]">
+    <div class="hero-content text-center">
+        <div class="max-w-md">
+            <div class="text-4xl mb-3">🛠️</div>
+            <h2 class="text-xl font-bold mb-2">No maintenance groups configured</h2>
+            <p class="opacity-60">Add a <code class="kbd kbd-sm">maintenance.groups</code> list to your <code class="kbd kbd-sm">config.yaml</code> to define groups of pull requests, such as Renovate PRs.</p>
+        </div>
+    </div>
+</div>
+{% endif %}
+{% endblock %}
