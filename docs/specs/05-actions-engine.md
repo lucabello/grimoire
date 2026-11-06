@@ -41,8 +41,8 @@ script: |
 A minimal action for testing workspace setup:
 
 ```yaml
-# data/actions/test.yaml
-name: "Test"
+# data/actions/print-workdir.yaml
+name: "Print Workdir"
 description: "Runs pwd in each repository workspace to verify workspace setup"
 targets:
   regex: ".*"
@@ -53,7 +53,7 @@ script: |
 A **global** action (no targets — runs once, not per-repo):
 
 ```yaml
-# data/actions/rerun-failed-pr-workflows.yaml
+# data/actions/example-global.yaml
 name: "Rerun Failed PR Workflows"
 description: "Reruns failed CI on open PRs by specified authors"
 script: |
