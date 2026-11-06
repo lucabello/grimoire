@@ -49,6 +49,7 @@ The GitHub REST API has a rate limit of 5,000 requests/hour for authenticated us
 - **Issues:** Use `GET /repos/{owner}/{repo}/issues?state=open&per_page=100`. This returns both issues and PRs mixed together — filter client-side by excluding items that have a `pull_request` key in the JSON. Full list is needed to compute stale counts.
 - **Pull requests:** Use `GET /repos/{owner}/{repo}/pulls?state=open&per_page=100` (the Pulls API, not the Issues API). Full list is needed to compute stale counts.
 - **Workflows:** Use `GET /repos/{owner}/{repo}/actions/workflows` to list workflows, then `GET /repos/{owner}/{repo}/actions/workflows/{id}/runs?branch={branch}&per_page=1` to get only the latest run per workflow+branch. Before fetching runs, apply the repo's `workflow_include`/`workflow_exclude` glob patterns (via `fnmatch`) to skip irrelevant workflows. For the repo's default branch only, also fetch `GET /repos/{owner}/{repo}/actions/workflows/{id}/runs?per_page=10` (no `branch` param), discard any returned run whose `head_branch` matches another *tracked* branch of the same repo (it belongs to that branch, not the default one), and compare `created_at` of the remaining candidates against the branch-filtered result, keeping whichever is more recent. This handles workflows triggered by non-branch events (e.g. `release`, tag pushes): their `head_branch` is a tag, not the default branch, so the branch-filtered query can return an old (or no) run while a newer run is invisible to the filter. Non-default tracked branches never get this extra check: periodic or release-only workflows never actually ran there and must not be shown as if they did.
+- **Workflow run details:** The run that decides a workflow's status (the same run object, from the same requests — no extra calls) also supplies `run_id` (`id`), `run_attempt`, `event`, `head_sha`, `conclusion` (the raw GitHub value, `null` while the run is in progress), `created_at`, `run_started_at` and `updated_at`. `status` keeps its coarse mapping (`cancelled` and `timed_out` map to `failure`); `conclusion` carries the raw value. A status reused from the previous refresh (304 on the runs request, or a failed workflow listing) keeps its previous run details.
 - Use `per_page=100` on all list endpoints to minimize pagination.
 
 **Note on GraphQL:** GitHub's GraphQL API could batch queries for multiple repos into a single call. This is deferred as a future optimization — REST with ETags is simpler and provides sufficient efficiency. GraphQL has its own rate limiting (point-based), different error model, and adds implementation complexity.
@@ -141,7 +142,7 @@ All fetched data is persisted to the SQLite database as the **persistent cache**
 | `cached_repository` | full_name, default_branch, archived, source, last_commit_at, total_branches, fetched_at |
 | `cached_issue` | repo_full_name, title, number, url, author, created_at, last_comment_at, fetched_at |
 | `cached_pull_request` | repo_full_name, title, number, url, author, created_at, last_push_at, last_comment_at, fetched_at |
-| `cached_workflow_status` | repo_full_name, workflow_name, branch, status, url, run_url, fetched_at |
+| `cached_workflow_status` | repo_full_name, workflow_name, branch, status, url, run_url, run_id, run_attempt, event, head_sha, conclusion, run_created_at, run_started_at, run_updated_at, fetched_at (all run fields nullable) |
 | `cached_etag` | endpoint_url, etag, last_modified |
 
 Per-repo backlog weights are not persisted in this layer; the backlog engine resolves them from config when scoring items.
@@ -234,6 +235,15 @@ class WorkflowStatusResponse(BaseModel):
     branch: str
     status: str
     url: str
+    run_url: str
+    run_id: int | None
+    run_attempt: int | None      # 1 for the first attempt
+    event: str | None            # triggering event, e.g. "push", "schedule"
+    head_sha: str | None
+    conclusion: str | None       # raw GitHub conclusion; None while in progress
+    created_at: datetime | None  # ISO 8601 in JSON
+    run_started_at: datetime | None
+    updated_at: datetime | None
 
 class RefreshResponse(BaseModel):
     message: str   # "Refresh started"

@@ -39,6 +39,14 @@ class WorkflowStatusResponse(BaseModel):
     status: str
     url: str
     run_url: str = ""
+    run_id: int | None = None
+    run_attempt: int | None = None
+    event: str | None = None
+    head_sha: str | None = None
+    conclusion: str | None = None
+    created_at: datetime | None = None
+    run_started_at: datetime | None = None
+    updated_at: datetime | None = None
 
 
 class RepoSummary(BaseModel):
