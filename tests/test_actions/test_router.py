@@ -11,7 +11,7 @@ from httpx import ASGITransport, AsyncClient
 from grimoire.actions.loader import ActionDefinition
 from grimoire.actions.router import router, set_actions_state
 from grimoire.app import create_app
-from grimoire.database import create_tables, get_engine
+from grimoire.database import get_engine, upgrade_database
 from grimoire.models import TrackedRepository
 from grimoire.targeting import TargetSpec
 
@@ -62,7 +62,7 @@ def _repo() -> TrackedRepository:
 async def action_client(tmp_path: Path) -> AsyncIterator[AsyncClient]:
     """Provide an async HTTP client wired to a test app with the actions router."""
     engine = await get_engine(str(tmp_path / "test.db"))
-    await create_tables(engine)
+    await upgrade_database(engine)
 
     actions = [_action()]
     repos = [_repo()]
@@ -82,7 +82,7 @@ async def action_client(tmp_path: Path) -> AsyncIterator[AsyncClient]:
 async def action_client_with_engine(tmp_path: Path) -> AsyncIterator[tuple[AsyncClient, object]]:
     """Provide an async HTTP client plus the engine for direct DB access."""
     engine = await get_engine(str(tmp_path / "test.db"))
-    await create_tables(engine)
+    await upgrade_database(engine)
 
     actions = [_action()]
     repos = [_repo()]

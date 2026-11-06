@@ -2,10 +2,27 @@
 
 from __future__ import annotations
 
+import sqlite3
+from contextlib import closing
+from pathlib import Path
+
 import pytest
 from sqlalchemy.ext.asyncio import AsyncEngine
+from sqlmodel import SQLModel, select
+from sqlmodel.ext.asyncio.session import AsyncSession
 
-from grimoire.database import create_tables, get_engine, get_session
+from grimoire.database import CheckToggleRecord, get_engine, get_session, upgrade_database
+from grimoire.github.service import load_stats_from_db, save_stats_to_db
+from tests.legacy_db import (
+    RUN_DETAIL_COLUMNS,
+    columns,
+    create_legacy_database,
+    create_unversioned_current_database,
+    head_revision,
+    read_all,
+    revision_of,
+    schema_snapshot,
+)
 
 
 @pytest.fixture
@@ -13,7 +30,7 @@ async def engine(tmp_path) -> AsyncEngine:
     """Create a temporary in-memory database engine."""
     db_path = str(tmp_path / "test.db")
     eng = await get_engine(db_path)
-    await create_tables(eng)
+    await upgrade_database(eng)
     return eng
 
 
@@ -23,7 +40,7 @@ async def test_engine_creation(engine: AsyncEngine) -> None:
 
 
 async def test_tables_created(engine: AsyncEngine) -> None:
-    """All expected tables exist after create_tables."""
+    """All expected tables exist after upgrade_database."""
     from sqlmodel import text
 
     session = await get_session(engine)
@@ -164,3 +181,99 @@ async def test_restore_action_toggles(engine: AsyncEngine) -> None:
 
     assert actions[0].enabled is False  # restored from DB
     assert actions[1].enabled is True  # no DB record, stays default
+
+
+# ---------------------------------------------------------------------------
+# upgrade_database
+# ---------------------------------------------------------------------------
+
+
+async def test_upgrade_creates_fresh_database(tmp_path: Path) -> None:
+    """A database without tables ends at head with every table."""
+    db = tmp_path / "fresh.db"
+    engine = await get_engine(str(db))
+    await upgrade_database(engine)
+    await engine.dispose()
+
+    assert revision_of(db) == head_revision()
+    assert set(read_all(db)) == set(SQLModel.metadata.tables)
+    assert RUN_DETAIL_COLUMNS <= columns(db, "cached_workflow_status")
+
+
+async def test_upgrade_legacy_database_keeps_data(tmp_path: Path) -> None:
+    """A pre-migration database gains the run-detail columns and keeps toggles and history."""
+    db = tmp_path / "legacy.db"
+    create_legacy_database(db)
+    before = read_all(db)
+    assert not RUN_DETAIL_COLUMNS & columns(db, "cached_workflow_status")
+
+    engine = await get_engine(str(db))
+    await upgrade_database(engine)
+
+    assert revision_of(db) == head_revision()
+    assert RUN_DETAIL_COLUMNS <= columns(db, "cached_workflow_status")
+    after = read_all(db)
+    for table, rows in before.items():
+        if table == "cached_workflow_status":
+            continue
+        assert after[table] == rows, table
+    # Old workflow rows survive and the new columns are NULL.
+    (row,) = after["cached_workflow_status"]
+    assert row[:7] == before["cached_workflow_status"][0][:7]
+    with closing(sqlite3.connect(db)) as con:
+        cols = ", ".join(sorted(RUN_DETAIL_COLUMNS))
+        assert con.execute(f"SELECT {cols} FROM cached_workflow_status").fetchone() == (
+            (None,) * 8
+        )
+
+    async with AsyncSession(engine) as session:
+        toggles = {
+            t.check_slug: t.enabled for t in (await session.exec(select(CheckToggleRecord)))
+        }
+        assert toggles == {"lint": False, "license": True}
+
+    # The cache the app reads and writes on startup works against the upgraded schema.
+    repos, stats = await load_stats_from_db(engine)
+    assert [r.full_name for r in repos] == ["owner/repo1"]
+    assert stats[0].workflows[0].name == "CI"
+    assert stats[0].workflows[0].run_id is None
+    await save_stats_to_db(engine, stats, repos)
+    _, reloaded = await load_stats_from_db(engine)
+    assert reloaded[0].workflows[0].name == "CI"
+    await engine.dispose()
+
+
+async def test_upgrade_unversioned_current_database_is_stamped(tmp_path: Path) -> None:
+    """A database made by `create_all` after the run details is adopted without changes."""
+    db = tmp_path / "current.db"
+    await create_unversioned_current_database(db)
+    before = read_all(db)
+    schema = schema_snapshot(db)
+
+    engine = await get_engine(str(db))
+    await upgrade_database(engine)
+    await engine.dispose()
+
+    assert revision_of(db) == head_revision()
+    assert read_all(db) == before
+    assert [s for s in schema_snapshot(db) if "alembic_version" not in s[1]] == schema
+
+
+@pytest.mark.parametrize("state", ["fresh", "legacy", "unversioned"])
+async def test_upgrade_is_idempotent(tmp_path: Path, state: str) -> None:
+    """Upgrading an already upgraded database changes nothing."""
+    db = tmp_path / "grimoire.db"
+    if state == "legacy":
+        create_legacy_database(db)
+    elif state == "unversioned":
+        await create_unversioned_current_database(db)
+
+    engine = await get_engine(str(db))
+    await upgrade_database(engine)
+    schema, data = schema_snapshot(db), read_all(db)
+    await upgrade_database(engine)
+    await engine.dispose()
+
+    assert revision_of(db) == head_revision()
+    assert schema_snapshot(db) == schema
+    assert read_all(db) == data

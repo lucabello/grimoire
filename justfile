@@ -78,6 +78,11 @@ test:
 coverage:
     uv run pytest --cov=src --cov-report=term-missing
 
+# Create a database migration from the SQLModel changes (review it before committing)
+[group("dev")]
+migration message:
+    uv run python -m grimoire.migrations {{quote(message)}}
+
 # Sync and activate the virtual environment (.venv)
 [group("dev")]
 venv:

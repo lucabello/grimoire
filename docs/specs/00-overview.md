@@ -9,7 +9,7 @@ Grimoire is a self-hostable web application for monitoring GitHub repositories. 
 | Language | Python 3.13+ | Automation-native, rapid iteration, existing project setup |
 | Web framework | FastAPI | Async, auto OpenAPI docs, Pydantic integration |
 | Frontend | Jinja2 + HTMX + Tailwind/DaisyUI | Single deployment unit, no JS build step |
-| Database | SQLite via aiosqlite + SQLModel | Zero-config, self-hosting friendly, persistent cache |
+| Database | SQLite via aiosqlite + SQLModel, migrated with Alembic | Zero-config, self-hosting friendly, persistent cache that survives upgrades |
 | Scheduling | APScheduler (v3) | In-process cron, stable, SQLite job store |
 | GitHub API | httpx (async) | Lightweight, async-native HTTP client |
 | Observability | prometheus-client + opentelemetry-sdk | Standard tooling |
@@ -25,7 +25,8 @@ grimoire/
 │   ├── app.py                    # FastAPI application factory
 │   ├── config.py                 # YAML config schema + loading
 │   ├── models.py                 # Core domain models (shared)
-│   ├── database.py               # SQLModel engine + session
+│   ├── database.py               # SQLModel engine + session + upgrade_database
+│   ├── migrations/               # Alembic environment + revisions (versions/)
 │   ├── targeting.py              # Shared target resolution (list/regex/script)
 │   ├── maintenance.py            # Maintenance PR groups: GitHub search query/link builder + API
 │   ├── github/
@@ -70,6 +71,7 @@ grimoire/
 │   ├── test_workspace/
 │   ├── test_checks/
 │   ├── test_actions/
+│   ├── test_migrations/
 │   └── test_web/
 ├── data/                          # User-populated, mounted in Docker
 │   ├── checks/                    # Check definition YAML files
