@@ -15,22 +15,31 @@ from sqlalchemy.ext.asyncio import AsyncEngine
 from sqlmodel import delete, select
 from sqlmodel.ext.asyncio.session import AsyncSession
 
-from grimoire.config import GrimoireConfig, StalenessConfig, StaticRepoSource, TeamRepoSource
+from grimoire.config import (
+    GrimoireConfig,
+    PRGroup,
+    StalenessConfig,
+    StaticRepoSource,
+    TeamRepoSource,
+)
 from grimoire.database import (
     CachedIssue,
+    CachedOpenPullRequest,
     CachedPullRequest,
     CachedRepository,
     CachedWorkflowStatus,
     CheckResultRecord,
 )
-from grimoire.github.client import GitHubClient, NotFoundError
+from grimoire.github.client import ROLLUP_BATCH_SIZE, GitHubClient, NotFoundError, PRRollup
 from grimoire.models import (
     IssueDetail,
+    OpenPullRequest,
     PullRequestDetail,
     RepositoryStats,
     TrackedRepository,
     WorkflowStatus,
 )
+from grimoire.prs import CI_WARNING_PREFIX, matches
 
 logger = logging.getLogger(__name__)
 
@@ -265,12 +274,14 @@ async def fetch_repository_stats(
     stale_pr_items: list[PullRequestDetail] = list(previous.stale_pr_items) if previous else []
     oldest_pr_created_at: datetime | None = previous.oldest_pr_created_at if previous else None
     pr_created_dates: list[datetime] = list(previous.pr_created_dates) if previous else []
+    open_pr_items: list[OpenPullRequest] = list(previous.open_pr_items) if previous else []
     try:
         prs = await client.get_open_pull_requests(repo.full_name)
         if prs is not None:
             open_prs = len(prs)
             stale_prs = 0
             stale_pr_items = []
+            open_pr_items = []
             pr_created_dates = []
             stale_cutoff = now - timedelta(days=staleness.pull_requests_days)
             for pr in prs:
@@ -278,6 +289,9 @@ async def fetch_repository_stats(
                 if created_at is not None:
                     pr_created_dates.append(created_at)
                 last_activity = _parse_dt(pr.get("updated_at")) or created_at
+                open_pr = _to_open_pull_request(pr, created_at or now)
+                if open_pr is not None:
+                    open_pr_items.append(open_pr)
                 if _is_pr_stale(pr, stale_cutoff):
                     pr_number = pr.get("number")
                     if not pr_number or pr_number <= 0:
@@ -433,6 +447,7 @@ async def fetch_repository_stats(
         workflows=workflow_statuses,
         stale_issue_items=stale_issue_items,
         stale_pr_items=stale_pr_items,
+        open_pr_items=open_pr_items,
         warnings=warnings,
         fetched_at=now,
         last_commit_at=last_commit_at,
@@ -441,6 +456,27 @@ async def fetch_repository_stats(
         oldest_pr_created_at=oldest_pr_created_at,
         issue_created_dates=issue_created_dates,
         pr_created_dates=pr_created_dates,
+    )
+
+
+def _to_open_pull_request(pr: dict[str, Any], created_at: datetime) -> OpenPullRequest | None:
+    """Map a pulls-list entry; entries without a valid number are skipped."""
+    number = pr.get("number")
+    if not number or number <= 0:
+        return None
+    return OpenPullRequest(
+        number=number,
+        title=pr.get("title", ""),
+        url=pr.get("html_url", ""),
+        author=(pr.get("user") or {}).get("login", ""),
+        created_at=created_at,
+        updated_at=_parse_dt(pr.get("updated_at")),
+        draft=bool(pr.get("draft")),
+        labels=[label["name"] for label in pr.get("labels", [])],
+        base_ref=(pr.get("base") or {}).get("ref", ""),
+        head_ref=(pr.get("head") or {}).get("ref", ""),
+        head_sha=(pr.get("head") or {}).get("sha", ""),
+        auto_merge=pr.get("auto_merge") is not None,
     )
 
 
@@ -564,6 +600,8 @@ async def refresh_all_stats(
         stats = await asyncio.gather(*[_fetch(r) for r in repos])
         stats_list = list(stats)
 
+        await refresh_pull_request_ci(client, config.prs.groups, stats_list, old_stats_map)
+
         await save_stats_to_db(
             client._engine,
             stats_list,
@@ -572,6 +610,73 @@ async def refresh_all_stats(
         return repos, stats_list
     finally:
         _refresh_progress = None
+
+
+async def refresh_pull_request_ci(
+    client: GitHubClient,
+    groups: list[PRGroup],
+    stats_list: list[RepositoryStats],
+    previous: dict[str, RepositoryStats],
+) -> None:
+    """Fill CI, review and merge state of the pull requests that match a group.
+
+    Pull requests are queried in sequential GraphQL batches. A pull request GitHub did not
+    report (failed batch, or not found) keeps the state it had in *previous* when its head
+    commit is unchanged, and has none otherwise. A failed batch adds a warning to each of
+    its repositories.
+    """
+    if not groups:
+        return
+
+    targets: list[tuple[str, int]] = [
+        (stats.full_name, pr.number)
+        for stats in stats_list
+        for pr in stats.open_pr_items
+        if any(matches(group, stats.full_name, pr) for group in groups)
+    ]
+    stats_by_repo = {stats.full_name: stats for stats in stats_list}
+
+    rollups: dict[tuple[str, int], PRRollup] = {}
+    for start in range(0, len(targets), ROLLUP_BATCH_SIZE):
+        batch = targets[start : start + ROLLUP_BATCH_SIZE]
+        try:
+            rollups.update(await client.get_pull_request_rollups(batch))
+        except Exception as exc:
+            for full_name in dict.fromkeys(name for name, _ in batch):
+                stats_by_repo[full_name].warnings.append(
+                    f"{CI_WARNING_PREFIX} for {full_name}: {_brief_error(exc)}"
+                )
+
+    previous_items = {(name, p.number): p for name, s in previous.items() for p in s.open_pr_items}
+    wanted = set(targets)
+    now = datetime.now(UTC)
+    for stats in stats_list:
+        updated: list[OpenPullRequest] = []
+        for pr in stats.open_pr_items:
+            key = (stats.full_name, pr.number)
+            if key in wanted:
+                rollup = rollups.get(key)
+                old = previous_items.get(key)
+                if rollup is not None:
+                    pr = pr.model_copy(
+                        update={
+                            "ci_state": rollup.ci_state,
+                            "review_decision": rollup.review_decision,
+                            "merge_state": rollup.merge_state,
+                            "ci_fetched_at": now,
+                        }
+                    )
+                elif old is not None and old.head_sha == pr.head_sha:
+                    pr = pr.model_copy(
+                        update={
+                            "ci_state": old.ci_state,
+                            "review_decision": old.review_decision,
+                            "merge_state": old.merge_state,
+                            "ci_fetched_at": old.ci_fetched_at,
+                        }
+                    )
+            updated.append(pr)
+        stats.open_pr_items = updated
 
 
 # ---------------------------------------------------------------------------
@@ -602,6 +707,11 @@ async def save_stats_to_db(
             await session.exec(  # type: ignore[call-overload]
                 delete(CachedPullRequest).where(
                     CachedPullRequest.repo_full_name == fn  # type: ignore[arg-type]
+                )
+            )
+            await session.exec(  # type: ignore[call-overload]
+                delete(CachedOpenPullRequest).where(
+                    CachedOpenPullRequest.repo_full_name == fn  # type: ignore[arg-type]
                 )
             )
             await session.exec(  # type: ignore[call-overload]
@@ -682,6 +792,31 @@ async def save_stats_to_db(
                         author=item.author,
                         created_at=item.created_at,
                         last_comment_at=item.last_activity_at,
+                        fetched_at=stats.fetched_at or now,
+                    )
+                )
+
+            # Write open PRs
+            for open_pr in stats.open_pr_items:
+                session.add(
+                    CachedOpenPullRequest(
+                        repo_full_name=stats.full_name,
+                        number=open_pr.number,
+                        title=open_pr.title,
+                        url=open_pr.url,
+                        author=open_pr.author,
+                        created_at=open_pr.created_at,
+                        updated_at=open_pr.updated_at,
+                        draft=open_pr.draft,
+                        labels_json=json.dumps(open_pr.labels),
+                        base_ref=open_pr.base_ref,
+                        head_ref=open_pr.head_ref,
+                        head_sha=open_pr.head_sha,
+                        auto_merge=open_pr.auto_merge,
+                        ci_state=open_pr.ci_state,
+                        review_decision=open_pr.review_decision,
+                        merge_state=open_pr.merge_state,
+                        ci_fetched_at=open_pr.ci_fetched_at,
                         fetched_at=stats.fetched_at or now,
                     )
                 )
@@ -780,6 +915,36 @@ async def load_stats_from_db(
                 for p in pr_rows
             ]
 
+            # Load open PRs from cache
+            open_pr_rows = (
+                await session.exec(
+                    select(CachedOpenPullRequest)
+                    .where(CachedOpenPullRequest.repo_full_name == cr.full_name)
+                    .order_by(CachedOpenPullRequest.id)  # type: ignore[arg-type]
+                )
+            ).all()
+            open_pr_items = [
+                OpenPullRequest(
+                    number=p.number,
+                    title=p.title,
+                    url=p.url,
+                    author=p.author,
+                    created_at=_as_utc(p.created_at),
+                    updated_at=_as_utc(p.updated_at),
+                    draft=p.draft,
+                    labels=json.loads(p.labels_json),
+                    base_ref=p.base_ref,
+                    head_ref=p.head_ref,
+                    head_sha=p.head_sha,
+                    auto_merge=p.auto_merge,
+                    ci_state=p.ci_state,
+                    review_decision=p.review_decision,
+                    merge_state=p.merge_state,
+                    ci_fetched_at=_as_utc(p.ci_fetched_at),
+                )
+                for p in open_pr_rows
+            ]
+
             stats_list.append(
                 RepositoryStats(
                     full_name=cr.full_name,
@@ -791,6 +956,7 @@ async def load_stats_from_db(
                     workflows=workflows,
                     stale_issue_items=stale_issue_items,
                     stale_pr_items=stale_pr_items,
+                    open_pr_items=open_pr_items,
                     fetched_at=_as_utc(cr.fetched_at),
                     last_commit_at=_as_utc(cr.last_commit_at),
                     total_branches=cr.total_branches,
@@ -880,6 +1046,9 @@ async def _prune_repos_from_db(engine: AsyncEngine, active_names: set[str]) -> i
             )
             await session.exec(  # type: ignore[call-overload]
                 delete(CachedPullRequest).where(CachedPullRequest.repo_full_name == fn)  # type: ignore[arg-type]
+            )
+            await session.exec(  # type: ignore[call-overload]
+                delete(CachedOpenPullRequest).where(CachedOpenPullRequest.repo_full_name == fn)  # type: ignore[arg-type]
             )
             await session.exec(  # type: ignore[call-overload]
                 delete(CachedWorkflowStatus).where(CachedWorkflowStatus.repo_full_name == fn)  # type: ignore[arg-type]

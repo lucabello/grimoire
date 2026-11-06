@@ -44,6 +44,6 @@ All Prometheus metrics exposed at `GET /metrics`. Scraped using standard Prometh
 
 | Metric | Type | Labels | Description |
 |--------|------|--------|-------------|
-| `grimoire_github_api_requests_total` | Counter | `endpoint`, `status` | Total API calls made |
-| `grimoire_github_api_rate_limit_remaining` | Gauge | — | Current remaining rate limit |
+| `grimoire_github_api_requests_total` | Counter | `endpoint`, `status` | Total API calls made (REST, and `/graphql` for the PR CI status) |
+| `grimoire_github_api_rate_limit_remaining` | Gauge | — | Current remaining REST rate limit (the GraphQL limit is not tracked) |
 | `grimoire_github_api_rate_limit_reset` | Gauge | — | Unix timestamp of next rate limit reset |

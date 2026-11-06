@@ -164,6 +164,32 @@ class CachedPullRequest(SQLModel, table=True):
     fetched_at: datetime = Field(default_factory=_utcnow)
 
 
+class CachedOpenPullRequest(SQLModel, table=True):
+    """Cached open pull request shown on the PRs page (every open PR of a tracked repo)."""
+
+    __tablename__ = "cached_open_pull_request"  # type: ignore[assignment]
+
+    id: int | None = Field(default=None, primary_key=True)
+    repo_full_name: str = Field(index=True)
+    number: int
+    title: str
+    url: str
+    author: str = ""
+    created_at: datetime
+    updated_at: Optional[datetime] = None
+    draft: bool = False
+    labels_json: str = "[]"  # JSON-encoded list of label names
+    base_ref: str = ""
+    head_ref: str = ""
+    head_sha: str = ""
+    auto_merge: bool = False
+    ci_state: Optional[str] = None
+    review_decision: Optional[str] = None
+    merge_state: Optional[str] = None
+    ci_fetched_at: Optional[datetime] = None
+    fetched_at: datetime = Field(default_factory=_utcnow)
+
+
 class CachedWorkflowStatus(SQLModel, table=True):
     """Cached workflow run status."""
 

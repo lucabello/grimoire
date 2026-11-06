@@ -543,9 +543,9 @@ class TestDashboardConfig:
                 )
 
 
-class TestMaintenanceConfig:
+class TestPRsConfig:
     def test_absent_block_means_no_groups(self, tmp_config: Path) -> None:
-        assert load_config(tmp_config).maintenance.groups == []
+        assert load_config(tmp_config).prs.groups == []
 
     def test_loads_groups_from_yaml(self, tmp_path: Path) -> None:
         config_file = tmp_path / "config.yaml"
@@ -555,32 +555,30 @@ class TestMaintenanceConfig:
               token: "ghp_test"
             repositories:
               - repo: "owner/repo1"
-            maintenance:
+            prs:
               groups:
-                - name: renovate
+                - name: Maintenance
                   authors: ["app/renovate"]
                   labels: ["dependencies"]
                   title_words: ["deps"]
                   draft: false
                   base: main
-                  status: failure
                   repos: ["owner/*"]
             """)
         )
-        group = load_config(config_file).maintenance.groups[0]
-        assert group.name == "renovate"
+        group = load_config(config_file).prs.groups[0]
+        assert group.name == "Maintenance"
         assert group.authors == ["app/renovate"]
         assert group.labels == ["dependencies"]
         assert group.title_words == ["deps"]
         assert group.draft is False
         assert group.base == "main"
-        assert group.status == "failure"
         assert group.repos == ["owner/*"]
 
     def test_values_are_stripped(self) -> None:
-        from grimoire.config import MaintenanceConfig
+        from grimoire.config import PRsConfig
 
-        config = MaintenanceConfig.model_validate(
+        config = PRsConfig.model_validate(
             {"groups": [{"name": " bots ", "authors": [" app/renovate "], "base": " main "}]}
         )
         group = config.groups[0]
@@ -595,13 +593,12 @@ class TestMaintenanceConfig:
             {"draft": True},
             {"draft": False},
             {"base": "main"},
-            {"status": "pending"},
         ],
     )
     def test_each_matcher_alone_is_enough(self, matcher: dict[str, object]) -> None:
-        from grimoire.config import MaintenanceGroup
+        from grimoire.config import PRGroup
 
-        MaintenanceGroup.model_validate({"name": "g", **matcher})
+        PRGroup.model_validate({"name": "g", **matcher})
 
     @pytest.mark.parametrize(
         ("group", "message"),
@@ -616,28 +613,32 @@ class TestMaintenanceConfig:
             ({"name": "g", "title_words": [""]}, "'title_words' values must not be blank"),
             ({"name": "g", "authors": ["a"], "repos": [""]}, "'repos' values must not be blank"),
             ({"name": "g", "base": " "}, "'base' values must not be blank"),
-            ({"name": "g", "status": "green"}, "success"),
             ({"name": "g", "draft": "maybe"}, "draft"),
-            ({"name": "g", "labels": ['say "hi"']}, "double quotes"),
             ({"name": "g", "authors": "alice"}, "authors"),
         ],
     )
     def test_invalid_group_rejected(self, group: dict[str, object], message: str) -> None:
         from pydantic import ValidationError
 
-        from grimoire.config import MaintenanceConfig
+        from grimoire.config import PRsConfig
 
         with pytest.raises(ValidationError, match=message):
-            MaintenanceConfig.model_validate({"groups": [group]})
+            PRsConfig.model_validate({"groups": [group]})
+
+    def test_quotes_are_allowed_in_values(self) -> None:
+        from grimoire.config import PRGroup
+
+        group = PRGroup.model_validate({"name": "g", "title_words": ['say "hi"']})
+        assert group.title_words == ['say "hi"']
 
     def test_duplicate_names_rejected(self) -> None:
         from pydantic import ValidationError
 
-        from grimoire.config import MaintenanceConfig
+        from grimoire.config import PRsConfig
 
         group = {"name": "renovate", "authors": ["app/renovate"]}
         with pytest.raises(ValidationError, match="must be unique"):
-            MaintenanceConfig.model_validate({"groups": [group, {**group, "labels": ["x"]}]})
+            PRsConfig.model_validate({"groups": [group, {**group, "labels": ["x"]}]})
 
     def test_invalid_group_fails_config_load(self, tmp_path: Path) -> None:
         from pydantic import ValidationError
@@ -649,7 +650,7 @@ class TestMaintenanceConfig:
               token: "ghp_test"
             repositories:
               - repo: "owner/repo1"
-            maintenance:
+            prs:
               groups:
                 - name: empty
             """)

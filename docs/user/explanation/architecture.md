@@ -47,6 +47,7 @@ Grimoire is designed to be friendly to the GitHub API rate limit:
 
 - **Conditional requests**: Uses ETags to avoid re-downloading unchanged data. After the initial fetch, most refreshes cost zero API calls.
 - **`per_page=100`**: Maximises data per request.
+- **Batched GraphQL for PRs**: The CI status of the pull requests that match a PR group is read with one GraphQL request per 20 PRs, from a rate-limit bucket separate from REST. The PRs themselves come from the pull request lists that are fetched anyway.
 - **Bounded concurrency**: A semaphore limits parallel API calls to 10.
 - **SQLite persistence**: On restart, cached data is loaded immediately. The dashboard is usable before the first refresh completes.
 

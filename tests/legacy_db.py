@@ -130,8 +130,10 @@ def create_legacy_database(path: Path) -> None:
 async def create_unversioned_current_database(path: Path) -> None:
     """Create a database as `create_all` made it after the run details, before migrations."""
     engine = await get_engine(str(path))
+    # Tables added by later revisions did not exist yet
+    tables = [t for t in SQLModel.metadata.sorted_tables if t.name != "cached_open_pull_request"]
     async with engine.begin() as conn:
-        await conn.run_sync(SQLModel.metadata.create_all)
+        await conn.run_sync(lambda c: SQLModel.metadata.create_all(c, tables=tables))
     async with AsyncSession(engine) as session:
         session.add(CheckToggleRecord(check_slug="lint", enabled=False))
         session.add(

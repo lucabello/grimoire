@@ -199,18 +199,18 @@ class DashboardConfig(BaseModel):
 def _clean_value(value: str, field: str) -> str:
     value = value.strip()
     if not value:
-        raise ValueError(f"Maintenance group '{field}' values must not be blank")
-    if '"' in value:
-        raise ValueError(f"Maintenance group '{field}' values must not contain double quotes")
+        raise ValueError(f"PR group '{field}' values must not be blank")
     return value
 
 
-class MaintenanceGroup(BaseModel):
-    """A named set of pull-request matchers turned into a GitHub search query.
+class PRGroup(BaseModel):
+    """A named set of pull-request matchers selecting open PRs of the tracked repositories.
 
     Values of one list matcher are alternatives (OR); different matchers combine with AND.
-    ``repos`` is an optional scope: fnmatch patterns on the tracked repository full names
-    (all tracked repositories when empty).
+    ``authors`` ignore case, a leading ``app/`` and a trailing ``[bot]`` (``app/renovate``
+    matches ``renovate[bot]``). ``title_words`` are case-insensitive substrings. ``repos`` is
+    an optional scope: fnmatch patterns on the tracked repository full names (all tracked
+    repositories when empty).
     """
 
     name: str
@@ -219,7 +219,6 @@ class MaintenanceGroup(BaseModel):
     title_words: list[str] = Field(default_factory=list)
     draft: bool | None = None
     base: str | None = None
-    status: Literal["success", "failure", "pending"] | None = None
     repos: list[str] = Field(default_factory=list)
 
     @field_validator("name")
@@ -227,7 +226,7 @@ class MaintenanceGroup(BaseModel):
     def name_not_blank(cls, value: str) -> str:
         value = value.strip()
         if not value:
-            raise ValueError("Maintenance group name must not be blank")
+            raise ValueError("PR group name must not be blank")
         return value
 
     @field_validator("base")
@@ -248,25 +247,24 @@ class MaintenanceGroup(BaseModel):
             or self.title_words
             or self.draft is not None
             or self.base is not None
-            or self.status is not None
         ):
             raise ValueError(
-                f"Maintenance group '{self.name}' needs at least one matcher: "
-                "authors, labels, title_words, draft, base or status"
+                f"PR group '{self.name}' needs at least one matcher: "
+                "authors, labels, title_words, draft or base"
             )
         return self
 
 
-class MaintenanceConfig(BaseModel):
-    """Maintenance PR groups; each one links to a GitHub pull-request search."""
+class PRsConfig(BaseModel):
+    """Configuration of the PRs page: named groups of open pull requests."""
 
-    groups: list[MaintenanceGroup] = Field(default_factory=list)
+    groups: list[PRGroup] = Field(default_factory=list)
 
     @model_validator(mode="after")
     def unique_group_names(self) -> Self:
         names = [group.name for group in self.groups]
         if len(names) != len(set(names)):
-            raise ValueError("Maintenance group names must be unique")
+            raise ValueError("PR group names must be unique")
         return self
 
 
@@ -297,7 +295,7 @@ class GrimoireConfig(BaseModel):
     staleness: StalenessConfig = Field(default_factory=StalenessConfig)
     backlog: BacklogConfig = Field(default_factory=BacklogConfig)
     dashboard: DashboardConfig = Field(default_factory=DashboardConfig)
-    maintenance: MaintenanceConfig = Field(default_factory=MaintenanceConfig)
+    prs: PRsConfig = Field(default_factory=PRsConfig)
     refresh_schedule: str = "*/5 * * * *"
 
     data_dir: Path = Field(default_factory=_default_data_dir)

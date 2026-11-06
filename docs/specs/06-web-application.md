@@ -1,6 +1,6 @@
-# Module 6: Web Application (Dashboard, Repo Detail, Actions, Checks, Backlog, Maintenance Pages)
+# Module 6: Web Application (Dashboard, Repo Detail, Actions, Checks, Backlog, PRs Pages)
 
-Build the HTMX-powered web frontend with six pages: dashboard overview, individual repository detail, actions management, checks management, backlog prioritization, and maintenance PR groups.
+Build the HTMX-powered web frontend with six pages: dashboard overview, individual repository detail, actions management, checks management, backlog prioritization, and the PRs of configured groups.
 
 **Dependencies:** Modules 1–5 (all backend services).
 
@@ -10,7 +10,7 @@ Build the HTMX-powered web frontend with six pages: dashboard overview, individu
 
 Update `create_app()` to:
 
-- Mount all API routers (checks, actions, repos, maintenance).
+- Mount all API routers (checks, actions, repos, prs).
 - Mount web router for HTML pages.
 - Mount static files at `/static`.
 - Set up Jinja2 template environment.
@@ -42,7 +42,7 @@ def create_app() -> FastAPI:
     # Mount routers
     app.include_router(checks_router, prefix="/api")
     app.include_router(actions_router, prefix="/api")
-    app.include_router(maintenance_router, prefix="/api")
+    app.include_router(prs_router, prefix="/api")
     app.include_router(web_router)
     app.mount("/static", StaticFiles(directory="..."), name="static")
 
@@ -481,7 +481,7 @@ Individual items can be copied via the per-row clipboard button.
 - `repository.html` extends `base.html`.
 - `actions.html` extends `base.html`.
 - `checks.html` extends `base.html`.
-- `maintenance.html` extends `base.html`.
+- `prs.html` extends `base.html`; it includes `partials/prs_groups.html`, which the partial endpoint also renders.
 
 ## 6.9 — HTMX Partial Endpoints
 
@@ -499,6 +499,7 @@ These endpoints return HTML fragments (not full pages) for HTMX to swap in:
 | `GET /partials/check-output/{result_id}` | Expanded check output text |
 | `GET /partials/check-results/{slug}?sort=...&dir=...` | Per-check results grouped by run (collapsible) |
 | `GET /partials/backlog-items` | Filtered/sorted backlog item list |
+| `GET /partials/prs?sort=...&ci=...&search=...&group=...` | PR summary chips and group sections; also swaps the "last updated" line and the form's hidden `ci` input out of band |
 | `GET /partials/refresh-status` | Refresh button (idle/running with progress) |
 | `POST /partials/refresh-trigger` | Starts refresh, returns running-state button |
 | `GET /partials/check-run-status/{slug}` | Check run button with progress counter |
@@ -520,96 +521,75 @@ Every section must render a helpful message when there's no data:
 | No action results yet | Per-action "Results" button hidden; inline text shows "no runs yet". |
 | Repo has warnings | Amber ⚠ with hover text; never an empty row. |
 | No backlog items | Backlog page shows "No issues found — all clear! 🎉" |
-| No maintenance groups | Maintenance page shows "No maintenance groups configured" and how to add `maintenance.groups` to `config.yaml`. |
-| Group with no tracked repo in scope | The group card says "No tracked repository is in scope for this group yet." and has no link. |
+| No PR groups | PRs page shows "No PR groups configured" and a `prs.groups` snippet. |
+| PR groups but no data yet | PRs page shows "Waiting for the first refresh" (the refresh button shows the progress; the list loads when it completes). |
+| Group with no matching PR | The group section says "No open PRs match this group 🎉". |
+| Filters match nothing | The group section says "No PRs match the current filters." |
+| CI status could not be fetched | One amber line with the warning count; the rows keep their last known state. |
 
-## 6.11 — Maintenance Page and Groups API
+## 6.11 — PRs Page and API
 
-**Files:** `src/grimoire/maintenance.py` (builder, state, API router), `src/grimoire/web/router.py` (page), `templates/maintenance.html`
-**Config:** `maintenance.groups` (spec 1.2). **Nav entry:** "Maintenance" after "Actions".
+**Files:** `src/grimoire/prs.py` (matcher, grouping, page filters, state, API router), `src/grimoire/web/router.py` (page and partial), `templates/prs.html`, `templates/partials/prs_groups.html`
+**Config:** `prs.groups` (spec 1.2). **Nav entry:** "PRs" after "Actions".
 
-Maintenance groups answer "which PRs of kind X are open across my repositories?" (Renovate PRs, PRs by one user, …). Grimoire does **not** store or fetch those PRs: it holds the tracked repository list (including team-resolved repos), so it builds the GitHub search query and a `https://github.com/pulls?q=…` link. No GitHub request is made, no table is added, and the refresh is unchanged.
+The PRs page answers "which PRs of kind X are open across my repositories, and are they green?" (Renovate and Dependabot PRs, a bot's PRs, one person's PRs, …). Grimoire already fetches the open pull requests of every tracked repository to count the stale ones; it now keeps them (spec 2.2) and applies the groups to them when a page or the API reads the cache. Changing a group needs a restart but no refetch.
 
-### Query builder
+### Matching
 
-```python
-def build_group_searches(group: MaintenanceGroup, tracked: list[str]) -> list[MaintenanceSearch]
-# MaintenanceSearch(name, query, url, part=1, parts=1)
-```
+`matches(group, repo_full_name, pr) -> bool` is a pure function. Values of one list matcher are alternatives, different matchers are ANDed, and a group matches only the PRs of the repositories in its scope.
 
-A pure function of the group and the tracked repository full names.
-
-| Part of the query | Rule |
+| Matcher | Rule |
 |---|---|
-| Base | Always `is:pr is:open`. |
-| Repositories | The tracked names, sorted; narrowed by the group's `repos` globs. Always emitted as `repo:` qualifiers (`(repo:a OR repo:b …)` for several). No repository in scope → **no search** (a query without `repo:` would search all of GitHub). |
-| `authors` | `author:<value>` (`app/<name>` is used as is). |
-| `labels` | `label:<value>`. |
-| `title_words` | `<word> in:title`; each word carries its own `in:title`. |
-| `draft` / `base` / `status` | `draft:true\|false`, `base:<branch>`, `status:<success\|failure\|pending>`. |
-| Several values of one matcher | Alternatives: `(x OR y)`, always parenthesised. |
-| Several matchers | ANDed (space-separated). |
-| Quoting | A value is quoted (`"help wanted"`) unless it only contains word characters, `.`, `/`, `@`, `-`. A value that is `OR`, `AND` or `NOT` in any letter case, or that starts with `-`, is always quoted: bare, it would be a search operator or a negation (see row 12 in the limits table). A value such as `repo:x` contains `:`, so it is quoted and stays a literal term. Values never contain `"` (rejected by config validation). |
-| URL | `https://github.com/pulls?q=` + the query URL-encoded (`quote_plus`). |
-| Splitting | When the URL would exceed `MAX_URL_LENGTH` (7000), the repositories are split into several searches of the same group (`part`/`parts`); every part keeps all matchers. |
+| `repos` | `fnmatchcase` on the tracked full name; empty = every tracked repository. |
+| `authors` | Both sides are normalised: lower-case, a leading `app/` removed, a trailing `[bot]` removed. `app/renovate` therefore matches the login `renovate[bot]` that the REST pulls list reports, and `observability-noctua-bot` (a regular user account) matches itself. |
+| `labels` | Case-insensitive exact label name. |
+| `title_words` | Case-insensitive substring of the title (GitHub's search matched words; this is a deliberate change). |
+| `draft` | Boolean equality. |
+| `base` | Equality with the PR's base branch. |
 
-Example, group `renovate` (`authors: [app/renovate, app/dependabot]`, `draft: false`) over `acme/api`, `acme/web`:
+A PR that matches several groups appears in each of them (workflow groups on the dashboard, where the first match wins, are a different feature).
 
-```
-is:pr is:open (repo:acme/api OR repo:acme/web) (author:app/renovate OR author:app/dependabot) draft:false
-```
+Real payloads checked on 2026-11-06 against `canonical/*` repositories: the pulls list reports `dependabot[bot]` and `renovate[bot]` (`user.type` is `Bot`) and `observability-noctua-bot` as `user.type` `User`.
 
-### Syntax engine
+### CI, review and merge state
 
-The queries use GitHub's **advanced** issue search syntax (explicit `OR` and parentheses). The API evaluates it when asked: REST `search/issues` with `advanced_search=true` and GraphQL `search(type: ISSUE_ADVANCED)`. The REST default (legacy) engine rejects the parentheses. Single-valued matchers produce plain qualifiers that both engines understand; only a multi-valued matcher (or several repositories) needs the advanced engine.
-
-Whether `https://github.com/pulls?q=…` evaluates the advanced syntax is **unverified**: the page needs a login and could not be exercised, and GitHub's documentation only names the repository issues page and the issues dashboard (row 11). A link with a parenthesised multi-author, multi-label, multi-title-word or multi-repository query must be opened once by the maintainer to confirm the result before relying on it; only a group with single values over one repository has a query without `OR`. The Maintenance page says so next to the links.
-
-### Running a query with the `gh` CLI
-
-Verified on 2026-11-06 with `gh` 2.46.0 (the version installed here) against `canonical/operator` and `canonical/pebble`, read-only. Statements about `gh` 2.103.3 come from a separate check that was not reproduced here.
-
-| Command | Observed |
-|---|---|
-| `gh api -X GET search/issues -f advanced_search=true -f q="$query"` | Works on 2.46.0 (`(repo:canonical/operator OR repo:canonical/pebble)` = 54 open PRs). Recommended. With `--paginate` (and `-f per_page=100`) it returned the same 54 items. GitHub's documentation limits search to 1000 results and 100 per page (not tested here). |
-| `gh search prs "$query"` (whole query as one argument) | Silently returns no results on 2.46.0 (observed) and on 2.103.3 (separate check): the query is sent as one quoted term. |
-| `gh search prs -- $query` (query split into words) | 422 "Invalid search query" on 2.46.0 (observed) for a query with `OR`: there is no way to select the advanced engine. Works only on a recent `gh` (2.103.3 by the separate check). |
-| `gh pr list -R owner/name --search "$query"` | Per repository only. On 2.46.0 (observed, `canonical/operator`) a parenthesised `OR` of qualifiers returned 0: `(draft:true OR draft:false)` = 0 where `draft:false` = 19 and `draft:true` = 14, and `(author:dimaqq OR author:tonyandrewmeyer)` = 0 where `author:tonyandrewmeyer` = 21. `(fix in:title OR docs in:title)` did return the union (20 = 13 + 7). The parenthesised `OR` is evaluated on 2.103.3 (separate check). Do not rely on it with an older `gh`. |
-
-### Verified GitHub search limits
-
-Checked on 2026-11-06 with the authenticated `gh` CLI (2.46.0) against `search/issues` (read-only, `per_page=1`) and with the GitHub docs. Counts are `total_count`.
-
-| # | Question | Observed |
-|---|---|---|
-| 1 | Query length / operators, legacy engine | Docs: query text at most 256 characters (operators and qualifiers excluded) and at most five `AND`/`OR`/`NOT` operators; violations are a 422 "Validation failed". |
-| 2 | Repeated qualifiers, legacy engine | `repo:A repo:B` = 73 = 37 + 36 and `author:x author:y` = 26 = 23 + 3, so repeated qualifiers are alternatives. `(author:x OR author:y)` is a 422 ("listed users cannot be searched"), and `author:x OR author:y` is a 422 ("logical operators only apply to text, not to qualifiers"). |
-| 3 | Repeated qualifiers, advanced engine | `repo:A repo:B` = 0 and `author:x author:y` = 6 (explicit `(author:x OR author:y)` = 20): repeated qualifiers are **not** alternatives, OR must be explicit. |
-| 4 | Explicit OR, advanced engine | `(repo:A OR repo:B)` = 73 and `(repo:A OR repo:B) (author:x OR author:y)` = 25: works. |
-| 5 | OR without parentheses | `repo:A docs in:title OR spread in:title` = 18811: the `repo:` scope is silently dropped. The builder always parenthesises. |
-| 6 | Comma lists | `repo:A,B` and `author:x,y` are a 422. `label:a,b` works (alternatives) but the builder uses `(label:a OR label:b)`. |
-| 7 | `in:title` with OR | `(docs OR spread) in:title` = 35 (also matches bodies); `(docs in:title OR spread in:title)` = 11, equal to the count obtained from the PR list. |
-| 8 | Many repositories | 67 repositories as `(repo:… OR …)` (66 `OR`s, 2543 characters) is accepted: 713, equal to the sum of its two halves (313 + 400), `incomplete_results: false`. 150 repositories (149 `OR`s, 5536 characters) is accepted. No operator or length limit was hit below the URL limit. |
-| 9 | URL length | A request line above ~8.1 KB is a 414 on both `api.github.com` ("Request-URL that is too long", 300 repositories, 11 KB) and `github.com/pulls` (8187 bytes accepted, 8196 refused). 150 repositories already take 6.5 KB; 67 take 2.9 KB. Hence `MAX_URL_LENGTH = 7000` and the split into `parts`. |
-| 10 | `org:`/`user:` | Both are accepted (`org:canonical` = `user:canonical` = 10326). They are not used: they would include untracked repositories. |
-| 11 | github.com UI | An unauthenticated request to `github.com/pulls?q=…` answers 302 to the login page, so the UI was not exercised. GitHub's [Filtering and searching issues and pull requests](https://docs.github.com/en/issues/tracking-your-work-with-issues/using-issues/filtering-and-searching-issues-and-pull-requests) page says boolean and nested queries work "on your repository's issues page and the issues dashboard"; it does not mention the pull requests page. The `gh` source has TODOs saying support for advanced issue search on the PR tab was not yet confirmed. Behaviour of `/pulls?q=` for parenthesised queries is therefore **unverified**. |
-| 12 | Search keywords and `-` in values (advanced engine, `canonical/operator`, 33 open PRs) | `repo:canonical/operator OR in:title` (title word `OR`, bare) = 199,210,519: the top-level `OR` drops the repo scope. Quoted, `repo:canonical/operator "OR" in:title` = 0 and `("OR" in:title OR fix in:title)` = 13 (equal to `fix in:title` alone), so the scope holds. Bare `-docs in:title` = 7, the same as `docs in:title` (not a literal word, not a clean negation); `"-docs" in:title` = 7 as a quoted term. |
-
-Everything the group fields express is expressible: OR within a matcher, AND across matchers, any number of tracked repositories (via splitting).
-
-### API
-
-`GET /api/maintenance/groups` → `list[MaintenanceSearch]`, in configured group order, one item per search:
-
-```json
-[{"name": "renovate", "query": "is:pr is:open (repo:acme/api OR repo:acme/web) author:app/renovate", "url": "https://github.com/pulls?q=is%3Apr+is%3Aopen+...", "part": 1, "parts": 1}]
-```
-
-Reads the registered config (`set_maintenance_config`) and the tracked repositories (`github.router._repos`) only. A group with no repository in scope has no item. Consumers that run the query themselves must use the advanced engine and run every part of a group; the recommended command is `gh api -X GET search/issues -f advanced_search=true -f q="$query"` (see "Running a query with the `gh` CLI" for what does not work).
+The pulls list has no CI state. For the PRs that match a group, `refresh_all_stats` asks GraphQL after the per-repository fetches (spec 2.1: `get_pull_request_rollups`, batches of 20, sequential). With no groups configured no GraphQL request is made. A GraphQL failure leaves the list intact: the PRs keep their previous state when their head commit is unchanged, have none otherwise, and the repository gets a `Could not fetch CI status for …` warning. The CI badge shows the GitHub rollup, so a Renovate PR waiting out `renovate/stability-days` shows as pending until the delay passes.
 
 ### Page
 
-**Route:** `GET /maintenance`. One card per configured group: name, the matchers (list values joined with "or"), the repository scope ("all tracked repositories" or the `repos` globs), and per search the query text plus an "Open on GitHub" button (`target="_blank" rel="noopener noreferrer"`). A split group shows "Part i of n" per search. One line near the links warns that GitHub may not apply the parenthesised syntax on this page and that a multi-value link should be checked once. Empty states: see 6.10.
+**Route:** `GET /prs?sort=&ci=&search=&group=` (unknown values fall back to the defaults). Query values only filter what is displayed.
+
+- **Header:** "PRs", "Last updated X ago" and the refresh button (`partials/refresh_button.html`); the list reloads on `refreshCompleted`.
+- **Controls:** a debounced search box (repository, title or author substring), a sort select and, with several groups, a group select. They form one HTMX form that swaps `#prs-content` from `GET /partials/prs`.
+- **Summary chips:** total, failing, pending, passing, no checks (and unknown, when some PRs have no CI data), counted over the distinct PRs of the shown groups after search and group selection. A chip sets the `ci` filter; clicking the active chip clears it.
+- **Group sections:** one `<details open>` per group in config order. The summary shows the name and "N PRs in M repos · X failing · Y pending".
+- **Row:** CI badge (check, xmark, clock or minus icon linking to `{pr}/checks`, tooltip "CI … (as of …)"; a failing row has a left `border-error` accent) · repository (links to `/repo/{owner}/{name}`) · `#number title` opening GitHub in a new tab (`rel="noopener noreferrer"`) with draft, auto-merge and label badges, the head branch and the base branch when it differs from the repository default · author (normalised, robot icon when the login ends in `[bot]`) · review and merge badges · age (created, absolute time in a tooltip) · last update.
+- **Review and merge badges:** `approved`, `changes requested`, `review required`; merge `conflicts` (`dirty`), `behind`, `blocked` (hidden when the review state already explains it) and `ready` (`clean`). A merge state of `unknown` shows nothing.
+- **Sorting:** `attention` (default: failure, pending, no checks or unknown, then success; oldest first within each), `repo`, `age` (oldest first), `updated` (most recent first).
+- **Tables** scroll horizontally on small screens. Empty states: see 6.10.
+
+### API
+
+`GET /api/prs` reads the in-memory cache only (no GitHub calls) and returns the groups in config order:
+
+```json
+{
+  "last_refresh": "2026-11-06T21:05:00Z",
+  "groups": [{
+    "name": "Maintenance",
+    "total": 12, "failing": 3, "pending": 1, "passing": 7, "no_checks": 1,
+    "pull_requests": [{
+      "repo": "canonical/operator", "number": 12, "title": "…", "url": "https://github.com/canonical/operator/pull/12",
+      "author": "renovate[bot]", "created_at": "…", "updated_at": "…", "draft": false, "labels": ["dependencies"],
+      "base": "main", "head_ref": "renovate/…", "head_sha": "…", "auto_merge": false,
+      "ci": "failure", "ci_url": "https://github.com/canonical/operator/pull/12/checks",
+      "review_decision": "review_required", "merge_state": "blocked", "ci_checked_at": "…"
+    }]
+  }]
+}
+```
+
+`author` is the raw login. `ci` (`success`, `failure`, `pending`, `none`), `review_decision`, `merge_state` and `ci_checked_at` are `null` when GraphQL has not reported them. A PR matching several groups appears in each. There are no query filters: consumers filter the list themselves.
 
 ## Acceptance Criteria
 
@@ -629,9 +609,9 @@ Reads the registered config (`set_maintenance_config`) and the tracked repositor
 - [ ] Backlog export renders correct Markdown with tier grouping
 - [ ] Backlog per-item copy-to-clipboard works
 - [ ] Backlog filters by category and repo work correctly
-- [ ] Maintenance page lists each configured group with matchers, query and a GitHub link opening in a new tab; empty state explains how to configure
-- [ ] `GET /api/maintenance/groups` returns name, query and url per search without GitHub calls
-- [ ] Generated queries are accepted by GitHub's advanced search (see 6.11 for the verified limits)
+- [ ] A group with `authors: ["app/renovate", "app/dependabot", "observability-noctua-bot"]` matches the PRs of `renovate[bot]`, `dependabot[bot]` and `observability-noctua-bot` and no others
+- [ ] PRs page shows one section per group with CI badge, repository, linked title, labels, draft and auto-merge badges, author, review/merge badges, age and last update; chips, search, `ci` filter, sort and group selection work through HTMX; all empty states render
+- [ ] `GET /api/prs` returns the groups with their PRs without GitHub calls; `/maintenance` and `/api/maintenance/groups` are gone
 - [ ] HTMX partial updates work without full page reloads
 - [ ] Pages render correctly in both light and dark mode
 - [ ] Pages are responsive (usable on tablet/mobile, scrollable tables)

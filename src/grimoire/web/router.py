@@ -17,15 +17,22 @@ from sqlalchemy import text
 from sqlmodel import select
 from sqlmodel.ext.asyncio.session import AsyncSession
 
-from grimoire.config import DashboardConfig, MaintenanceGroup, StalenessConfig
+from grimoire.config import DashboardConfig, StalenessConfig
 from grimoire.database import ActionRunRecord
-from grimoire.maintenance import (
-    MaintenanceSearch,
-    build_group_searches,
-    get_maintenance_config,
-    tracked_repo_names,
-)
 from grimoire.models import TrackedRepository, WorkflowStatus
+from grimoire.prs import (
+    CI_FILTERS,
+    CI_WARNING_PREFIX,
+    PR_SORT_LABELS,
+    GroupResult,
+    build_group_results,
+    distinct_ci_counts,
+    filter_by_ci,
+    get_prs_config,
+    normalize_author,
+    search_results,
+    sort_pull_requests,
+)
 from grimoire.targeting import TargetSpec
 from grimoire.web.backlog import (
     BacklogItem,
@@ -818,52 +825,84 @@ async def checks_page(request: Request) -> HTMLResponse:
     )
 
 
-@dataclass
-class MaintenanceGroupViewModel:
-    """Prepared data for rendering a maintenance group on the maintenance page."""
-
-    name: str
-    matchers: list[tuple[str, str]]
-    scope: str
-    searches: list[MaintenanceSearch]
+# ---------------------------------------------------------------------------
+# PRs page
+# ---------------------------------------------------------------------------
 
 
-def _describe_matchers(group: MaintenanceGroup) -> list[tuple[str, str]]:
-    """Label/value pairs for the matchers a group sets (list values are alternatives)."""
-    pairs: list[tuple[str, str]] = []
-    if group.authors:
-        pairs.append(("authors", " or ".join(group.authors)))
-    if group.labels:
-        pairs.append(("labels", " or ".join(group.labels)))
-    if group.title_words:
-        pairs.append(("title words", " or ".join(group.title_words)))
-    if group.draft is not None:
-        pairs.append(("draft", str(group.draft).lower()))
-    if group.base is not None:
-        pairs.append(("base", group.base))
-    if group.status is not None:
-        pairs.append(("status", group.status))
-    return pairs
+def _build_prs_context(sort: str, ci: str, search: str, group: str) -> dict[str, Any]:
+    """Template context of the PRs page and partial: groups filtered, sorted and counted."""
+    from grimoire.github.router import _cache, _last_refresh
 
+    config = get_prs_config()
+    names = [g.name for g in config.groups]
+    sort = sort if sort in PR_SORT_LABELS else "attention"
+    ci = ci if ci in CI_FILTERS else ""
+    group = group if group in names else ""
 
-@router.get("/maintenance", response_class=HTMLResponse)
-async def maintenance_page(request: Request) -> HTMLResponse:
-    """Maintenance page — one GitHub PR search link per configured group."""
-    tracked = tracked_repo_names()
-    groups = [
-        MaintenanceGroupViewModel(
-            name=group.name,
-            matchers=_describe_matchers(group),
-            scope=", ".join(group.repos) if group.repos else "all tracked repositories",
-            searches=build_group_searches(group, tracked),
-        )
-        for group in get_maintenance_config().groups
+    all_results = build_group_results(config, _cache)
+    scoped = search_results([g for g in all_results if not group or g.name == group], search)
+    shown = [
+        GroupResult(g.name, sort_pull_requests(g.pull_requests, sort))
+        for g in filter_by_ci(scoped, ci)
     ]
-    return templates.TemplateResponse(
-        request,
-        "maintenance.html",
-        context={"groups": groups},
+    ci_warnings = [
+        w for stats in _cache.values() for w in stats.warnings if w.startswith(CI_WARNING_PREFIX)
+    ]
+
+    return {
+        "groups": shown,
+        "matched_totals": {g.name: g.total for g in all_results},
+        "group_names": names,
+        "counts": distinct_ci_counts(scoped),
+        "has_data": bool(_cache),
+        "ci_warnings": ci_warnings,
+        "last_refresh": _last_refresh,
+        "last_refresh_ago": _time_ago(_last_refresh) if _last_refresh else None,
+        "sort": sort,
+        "ci": ci,
+        "search": search.strip(),
+        "group": group,
+        "sort_labels": PR_SORT_LABELS,
+        "time_ago": _time_ago,
+        "normalize_author": normalize_author,
+    }
+
+
+@router.get("/prs", response_class=HTMLResponse)
+async def prs_page(
+    request: Request,
+    sort: str = "attention",
+    ci: str = "",
+    search: str = "",
+    group: str = "",
+) -> HTMLResponse:
+    """PRs page — the open pull requests of each configured group with their CI state."""
+    from grimoire.github.service import get_refresh_progress, is_refresh_running
+
+    progress = get_refresh_progress()
+    context = _build_prs_context(sort, ci, search, group)
+    context.update(
+        running=is_refresh_running(),
+        progress_completed=progress.completed if progress else 0,
+        progress_total=progress.total if progress else 0,
+        oob=False,
     )
+    return templates.TemplateResponse(request, "prs.html", context=context)
+
+
+@router.get("/partials/prs", response_class=HTMLResponse)
+async def prs_partial(
+    request: Request,
+    sort: str = "attention",
+    ci: str = "",
+    search: str = "",
+    group: str = "",
+) -> HTMLResponse:
+    """Return the filtered PR groups as an HTMX partial."""
+    context = _build_prs_context(sort, ci, search, group)
+    context["oob"] = True
+    return templates.TemplateResponse(request, "partials/prs_groups.html", context=context)
 
 
 # ---------------------------------------------------------------------------

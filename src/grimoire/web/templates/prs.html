@@ -1,0 +1,77 @@
+{% extends "base.html" %}
+{% block title %}PRs — Grimoire{% endblock %}
+{% block nav_prs %}active{% endblock %}
+{% block content %}
+
+{# ── Header ────────────────────────────────────────────────────────── #}
+<div class="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-4 mb-6">
+    <div>
+        <h1 class="text-3xl font-bold">PRs</h1>
+        <p id="prs-updated" class="text-sm opacity-60 mt-1">{% if last_refresh %}Last updated {{ last_refresh_ago }}{% endif %}</p>
+    </div>
+    <div class="flex items-center gap-3">
+        {% include "partials/refresh_button.html" %}
+    </div>
+</div>
+
+{% if group_names %}
+
+{# ── Controls ──────────────────────────────────────────────────────── #}
+<form id="prs-filters" class="flex flex-wrap items-center gap-3 mb-4"
+      hx-get="{{ base_path }}/partials/prs"
+      hx-target="#prs-content"
+      hx-swap="innerHTML"
+      hx-trigger="input changed delay:300ms from:#prs-search, change from:#prs-sort, change from:#prs-group"
+      onsubmit="return false">
+    <input type="hidden" id="prs-ci" name="ci" value="{{ ci }}">
+    <label class="input input-bordered input-sm flex items-center gap-2 w-full sm:w-72">
+        <i class="fa-solid fa-magnifying-glass opacity-50"></i>
+        <input type="search" id="prs-search" name="search" class="grow" placeholder="Search repository, title, author" value="{{ search }}" autocomplete="off">
+    </label>
+    <select id="prs-sort" name="sort" class="select select-bordered select-sm" title="Sort">
+        {% for key, label in sort_labels.items() %}
+        <option value="{{ key }}" {% if sort == key %}selected{% endif %}>{{ label }}</option>
+        {% endfor %}
+    </select>
+    {% if group_names | length > 1 %}
+    <select id="prs-group" name="group" class="select select-bordered select-sm" title="Group">
+        <option value="">All groups</option>
+        {% for name in group_names %}
+        <option value="{{ name }}" {% if group == name %}selected{% endif %}>{{ name }}</option>
+        {% endfor %}
+    </select>
+    {% endif %}
+</form>
+
+<div id="prs-content">
+    {% include "partials/prs_groups.html" %}
+</div>
+
+{% else %}
+{# ── No groups configured ──────────────────────────────────────────── #}
+<div class="hero min-h-[30vh]">
+    <div class="hero-content text-center">
+        <div class="max-w-lg">
+            <div class="text-4xl mb-3">🔀</div>
+            <h2 class="text-xl font-bold mb-2">No PR groups configured</h2>
+            <p class="opacity-60 mb-3">Add a <code class="kbd kbd-sm">prs.groups</code> list to your <code class="kbd kbd-sm">config.yaml</code> to collect pull requests across the tracked repositories, for example the ones opened by bots:</p>
+            <pre class="text-left text-sm bg-base-100 rounded-lg p-4 shadow-sm"><code>prs:
+  groups:
+    - name: Maintenance
+      authors: ["app/renovate", "app/dependabot"]</code></pre>
+        </div>
+    </div>
+</div>
+{% endif %}
+
+<script>
+    // Reload the list (keeping the current filters) when a background refresh completes
+    document.body.addEventListener('refreshCompleted', function() {
+        showToast('Refresh complete', 'success');
+        const form = document.getElementById('prs-filters');
+        if (!form) return;
+        const params = new URLSearchParams(new FormData(form));
+        htmx.ajax('GET', BASE_PATH + '/partials/prs?' + params, '#prs-content');
+    });
+</script>
+{% endblock %}

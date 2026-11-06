@@ -62,6 +62,31 @@ class PullRequestDetail(BaseModel):
     author: str = ""
 
 
+class OpenPullRequest(BaseModel):
+    """An open pull request of a tracked repository, as listed on the PRs page.
+
+    Everything but the CI fields comes from the pulls list. ``ci_state``,
+    ``review_decision`` and ``merge_state`` are ``None`` until GraphQL has reported them.
+    """
+
+    number: int
+    title: str
+    url: str
+    author: str = ""
+    created_at: datetime
+    updated_at: datetime | None = None
+    draft: bool = False
+    labels: list[str] = []
+    base_ref: str = ""
+    head_ref: str = ""
+    head_sha: str = ""
+    auto_merge: bool = False
+    ci_state: str | None = None  # "success" | "failure" | "pending" | "none"
+    review_decision: str | None = None  # "approved" | "changes_requested" | "review_required"
+    merge_state: str | None = None  # lower-cased GraphQL MergeStateStatus
+    ci_fetched_at: datetime | None = None
+
+
 class RepositoryStats(BaseModel):
     """Aggregated stats for a tracked repository."""
 
@@ -75,6 +100,7 @@ class RepositoryStats(BaseModel):
     stale_issue_items: list[IssueDetail] = []
     stale_pr_items: list[PullRequestDetail] = []
     warnings: list[str] = []
+    open_pr_items: list[OpenPullRequest] = []
     fetched_at: datetime | None = None
     last_commit_at: datetime | None = None
     total_branches: int = 0

@@ -29,6 +29,7 @@ from tests.legacy_db import (
     columns,
     create_legacy_database,
     create_unversioned_current_database,
+    head_revision,
     read_all,
     revision_of,
     schema_snapshot,
@@ -137,7 +138,7 @@ import sqlalchemy as sa
 from alembic import op
 
 revision = "{THROWAWAY_REVISION}"
-down_revision = "{RUN_DETAILS_REVISION}"
+down_revision = "{head_revision()}"
 branch_labels = None
 depends_on = None
 
@@ -181,3 +182,56 @@ async def test_adopted_database_receives_later_revisions(
 
     assert "throwaway" in columns(db, "cached_workflow_status")
     assert revision_of(db) == THROWAWAY_REVISION
+
+
+async def test_open_pull_requests_revision_purges_only_pulls_etags(tmp_path: Path) -> None:
+    """The new table starts empty, so a stored pulls ETag would keep the PR list empty on 304."""
+    db = tmp_path / "grimoire.db"
+    create_legacy_database(db)
+    engine = await get_engine(str(db))
+
+    def upgrade_to_run_details(connection: Connection) -> None:
+        config = alembic_config(connection)
+        command.stamp(config, BASELINE_REVISION)
+        command.upgrade(config, RUN_DETAILS_REVISION)
+
+    async with engine.begin() as conn:
+        await conn.run_sync(upgrade_to_run_details)
+    pulls_keys = [
+        "/repos/acme/api/pulls?per_page=100&state=open",
+        "https://api.github.com/repositories/1/pulls?per_page=100&page=2&state=open",
+    ]
+    other_keys = [
+        "/repos/acme/api/issues?per_page=100&state=open",
+        "/orgs/acme/teams/core/repos?per_page=100",
+        "/repos/acme/api/pulls/7",
+    ]
+    with closing(sqlite3.connect(db)) as con:
+        con.executemany(
+            "INSERT INTO cached_etag VALUES (?, 'abc', '')",
+            [(key,) for key in pulls_keys + other_keys],
+        )
+        con.commit()
+    before = read_all(db)
+
+    await upgrade_database(engine)
+
+    after = read_all(db)
+    assert "cached_open_pull_request" in after
+    assert after.pop("cached_open_pull_request") == []
+    assert {row[0] for row in before["cached_etag"]} - {
+        row[0] for row in after["cached_etag"]
+    } == (set(pulls_keys))
+    del before["cached_etag"], after["cached_etag"]
+    assert after == before
+    assert revision_of(db) == head_revision()
+
+    async with engine.begin() as conn:
+        await conn.run_sync(lambda c: command.downgrade(alembic_config(c), "-1"))
+    await engine.dispose()
+
+    assert revision_of(db) == RUN_DETAILS_REVISION
+    downgraded = read_all(db)
+    assert "cached_open_pull_request" not in downgraded
+    del downgraded["cached_etag"]
+    assert downgraded == before

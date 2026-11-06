@@ -2,13 +2,21 @@
 
 from __future__ import annotations
 
+import json
+
 import httpx
 import pytest
 import respx
 from sqlalchemy.ext.asyncio import AsyncEngine
 
 from grimoire.database import get_engine, upgrade_database
-from grimoire.github.client import GitHubAPIError, GitHubClient, NotFoundError
+from grimoire.github.client import (
+    GitHubAPIError,
+    GitHubClient,
+    NotFoundError,
+    PRRollup,
+    RateLimitError,
+)
 
 
 @pytest.fixture
@@ -493,3 +501,193 @@ async def test_api_requests_metric_incremented(client: GitHubClient) -> None:
     after = API_REQUESTS.labels(endpoint="/repos/{owner}/{repo}", status="200")._value.get()
 
     assert after == before + 1
+
+
+# ---------------------------------------------------------------------------
+# GraphQL pull request rollups
+# ---------------------------------------------------------------------------
+
+_GRAPHQL_URL = "https://api.github.com/graphql"
+_GRAPHQL_HEADERS = {
+    "X-RateLimit-Resource": "graphql",
+    "X-RateLimit-Limit": "5000",
+    "X-RateLimit-Remaining": "4975",
+    "X-RateLimit-Reset": "1793999084",
+}
+
+
+def _pr(state: str | None, review: str | None = None, merge: str | None = "BLOCKED") -> dict:
+    return {
+        "reviewDecision": review,
+        "mergeStateStatus": merge,
+        "statusCheckRollup": None if state is None else {"state": state},
+    }
+
+
+@respx.mock
+async def test_rollups_one_request_for_all_pull_requests(client: GitHubClient) -> None:
+    route = respx.post(_GRAPHQL_URL).mock(
+        return_value=httpx.Response(
+            200,
+            json={
+                "data": {
+                    "r0": {"p1": _pr("SUCCESS", "APPROVED", "CLEAN"), "p2": _pr("FAILURE")},
+                    "r1": {"p7": _pr(None, "REVIEW_REQUIRED", "BEHIND")},
+                    "rateLimit": {"cost": 1, "remaining": 4975},
+                }
+            },
+            headers=_GRAPHQL_HEADERS,
+        )
+    )
+
+    rollups = await client.get_pull_request_rollups(
+        [("acme/api", 1), ("acme/api", 2), ("acme/web", 7)]
+    )
+
+    assert rollups == {
+        ("acme/api", 1): PRRollup("success", "approved", "clean"),
+        ("acme/api", 2): PRRollup("failure", None, "blocked"),
+        ("acme/web", 7): PRRollup("none", "review_required", "behind"),
+    }
+    assert route.call_count == 1
+    request = route.calls[0].request
+    assert "If-None-Match" not in request.headers
+    query = json.loads(request.content)["query"]
+    assert (
+        'r0: repository(owner: "acme", name: "api") { '
+        "p1: pullRequest(number: 1) { reviewDecision mergeStateStatus statusCheckRollup { state } } "
+        "p2: pullRequest(number: 2) {"
+    ) in query
+    assert 'r1: repository(owner: "acme", name: "web")' in query
+
+
+@pytest.mark.parametrize(
+    ("state", "expected"),
+    [
+        ("SUCCESS", "success"),
+        ("FAILURE", "failure"),
+        ("ERROR", "failure"),
+        ("PENDING", "pending"),
+        ("EXPECTED", "pending"),
+        (None, "none"),
+    ],
+)
+@respx.mock
+async def test_rollup_ci_state_mapping(
+    client: GitHubClient, state: str | None, expected: str
+) -> None:
+    respx.post(_GRAPHQL_URL).mock(
+        return_value=httpx.Response(
+            200, json={"data": {"r0": {"p1": _pr(state)}}}, headers=_GRAPHQL_HEADERS
+        )
+    )
+    rollups = await client.get_pull_request_rollups([("acme/api", 1)])
+    assert rollups[("acme/api", 1)].ci_state == expected
+
+
+@respx.mock
+async def test_rollups_skip_missing_repositories_and_pull_requests(client: GitHubClient) -> None:
+    """GitHub answers 200 with NOT_FOUND errors and null aliases (real response shape)."""
+    respx.post(_GRAPHQL_URL).mock(
+        return_value=httpx.Response(
+            200,
+            json={
+                "data": {"r0": {"p1": _pr("SUCCESS"), "p9": None}, "r1": None},
+                "errors": [
+                    {
+                        "type": "NOT_FOUND",
+                        "path": ["r0", "p9"],
+                        "message": "Could not resolve to a PullRequest with the number of 9.",
+                    },
+                    {
+                        "type": "NOT_FOUND",
+                        "path": ["r1"],
+                        "message": "Could not resolve to a Repository with the name 'acme/gone'.",
+                    },
+                ],
+            },
+            headers=_GRAPHQL_HEADERS,
+        )
+    )
+
+    rollups = await client.get_pull_request_rollups(
+        [("acme/api", 1), ("acme/api", 9), ("acme/gone", 1)]
+    )
+
+    assert list(rollups) == [("acme/api", 1)]
+
+
+@respx.mock
+async def test_graphql_response_does_not_touch_the_rest_rate_limit(client: GitHubClient) -> None:
+    respx.get("https://api.github.com/repos/owner/repo").mock(
+        return_value=httpx.Response(
+            200,
+            json={"full_name": "owner/repo"},
+            headers={
+                "X-RateLimit-Resource": "core",
+                "X-RateLimit-Remaining": "4200",
+                "X-RateLimit-Limit": "5000",
+                "X-RateLimit-Reset": "1700000000",
+            },
+        )
+    )
+    await client.get_repo("owner/repo")
+    respx.post(_GRAPHQL_URL).mock(
+        return_value=httpx.Response(
+            200,
+            json={"data": {"r0": {"p1": _pr("SUCCESS")}}},
+            headers={**_GRAPHQL_HEADERS, "X-RateLimit-Remaining": "3"},
+        )
+    )
+
+    await client.get_pull_request_rollups([("acme/api", 1)])
+
+    assert client.rate_limit_remaining == 4200
+    assert client.rate_limit_reset == 1700000000.0
+    assert not client.is_degraded
+
+
+@respx.mock
+async def test_rollups_rate_limited_error(client: GitHubClient) -> None:
+    respx.post(_GRAPHQL_URL).mock(
+        return_value=httpx.Response(
+            200,
+            json={
+                "data": None,
+                "errors": [{"type": "RATE_LIMITED", "message": "API rate limit exceeded"}],
+            },
+            headers=_GRAPHQL_HEADERS,
+        )
+    )
+    with pytest.raises(RateLimitError):
+        await client.get_pull_request_rollups([("acme/api", 1)])
+
+
+@respx.mock
+async def test_rollups_other_errors_raise(client: GitHubClient) -> None:
+    respx.post(_GRAPHQL_URL).mock(
+        return_value=httpx.Response(
+            200,
+            json={
+                "data": {"r0": None},
+                "errors": [{"type": "FORBIDDEN", "path": ["r0"], "message": "SAML enforcement"}],
+            },
+            headers=_GRAPHQL_HEADERS,
+        )
+    )
+    with pytest.raises(GitHubAPIError, match="SAML enforcement"):
+        await client.get_pull_request_rollups([("acme/api", 1)])
+
+
+@respx.mock
+async def test_rollups_request_is_recorded_in_metrics(client: GitHubClient) -> None:
+    from grimoire.observability.metrics import API_REQUESTS
+
+    respx.post(_GRAPHQL_URL).mock(
+        return_value=httpx.Response(
+            200, json={"data": {"r0": {"p1": _pr("SUCCESS")}}}, headers=_GRAPHQL_HEADERS
+        )
+    )
+    before = API_REQUESTS.labels(endpoint="/graphql", status="200")._value.get()
+    await client.get_pull_request_rollups([("acme/api", 1)])
+    assert API_REQUESTS.labels(endpoint="/graphql", status="200")._value.get() == before + 1

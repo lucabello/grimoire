@@ -15,12 +15,15 @@ from sqlmodel.ext.asyncio.session import AsyncSession
 from grimoire.config import (
     GitHubConfig,
     GrimoireConfig,
+    PRGroup,
+    PRsConfig,
     StalenessConfig,
     StaticRepoSource,
     TeamRepoSource,
 )
 from grimoire.database import (
     CachedIssue,
+    CachedOpenPullRequest,
     CachedPullRequest,
     CachedRepository,
     CachedWorkflowStatus,
@@ -39,6 +42,7 @@ from grimoire.github.service import (
 )
 from grimoire.models import (
     IssueDetail,
+    OpenPullRequest,
     PullRequestDetail,
     RepositoryStats,
     TrackedRepository,
@@ -1234,6 +1238,15 @@ async def test_prune_stale_data_cleans_related_rows(engine: AsyncEngine) -> None
             )
         )
         session.add(
+            CachedOpenPullRequest(
+                repo_full_name=repo_name,
+                number=3,
+                title="Open PR",
+                url="https://example.com/3",
+                created_at=now,
+            )
+        )
+        session.add(
             CachedWorkflowStatus(
                 repo_full_name=repo_name,
                 branch="main",
@@ -1260,6 +1273,7 @@ async def test_prune_stale_data_cleans_related_rows(engine: AsyncEngine) -> None
     async with AsyncSession(engine) as session:
         assert (await session.exec(select(CachedIssue))).all() == []
         assert (await session.exec(select(CachedPullRequest))).all() == []
+        assert (await session.exec(select(CachedOpenPullRequest))).all() == []
         assert (await session.exec(select(CachedWorkflowStatus))).all() == []
         assert (await session.exec(select(CheckResultRecord))).all() == []
         assert (await session.exec(select(CachedRepository))).all() == []
@@ -1393,3 +1407,390 @@ async def test_refresh_tracks_progress(client: GitHubClient, engine: AsyncEngine
     assert not is_refresh_running()
     assert get_refresh_progress() is None
     assert len(result_repos) == 1
+
+
+# ---------------------------------------------------------------------------
+# Open pull requests and their CI state
+# ---------------------------------------------------------------------------
+
+_GRAPHQL_URL = "https://api.github.com/graphql"
+_GRAPHQL_HEADERS = {
+    "X-RateLimit-Resource": "graphql",
+    "X-RateLimit-Limit": "5000",
+    "X-RateLimit-Remaining": "4990",
+}
+_BOTS = PRGroup(name="Maintenance", authors=["app/renovate", "app/dependabot"])
+
+
+def _pull(
+    number: int, author: str = "renovate[bot]", sha: str | None = None, **extra: object
+) -> dict:
+    """A pulls-list entry as the REST API returns it (bots are reported as ``name[bot]``)."""
+    return {
+        "number": number,
+        "title": f"Update dependency {number}",
+        "html_url": f"https://github.com/owner/repo1/pull/{number}",
+        "user": {"login": author, "type": "Bot" if author.endswith("[bot]") else "User"},
+        "created_at": "2026-03-01T10:00:00Z",
+        "updated_at": "2026-03-02T10:00:00Z",
+        "draft": False,
+        "labels": [{"name": "dependencies"}],
+        "head": {"ref": f"renovate/dep-{number}", "sha": sha or f"{number:040d}"},
+        "base": {"ref": "main"},
+        "auto_merge": None,
+        **extra,
+    }
+
+
+def _rollups(
+    states: dict[int, str | None], review: str | None = "REVIEW_REQUIRED"
+) -> httpx.Response:
+    """A GraphQL answer for ``owner/repo1`` pull requests (None means no checks)."""
+    pull_requests = {
+        f"p{number}": {
+            "reviewDecision": review,
+            "mergeStateStatus": "BLOCKED",
+            "statusCheckRollup": None if state is None else {"state": state},
+        }
+        for number, state in states.items()
+    }
+    return httpx.Response(
+        200,
+        json={"data": {"r0": pull_requests, "rateLimit": {"cost": 1, "remaining": 4990}}},
+        headers=_GRAPHQL_HEADERS,
+    )
+
+
+def _mock_refresh_routes(pulls: list[httpx.Response] | httpx.Response) -> respx.Route:
+    """Every REST endpoint a refresh of ``owner/repo1`` uses; returns the pulls route."""
+    respx.get("https://api.github.com/repos/owner/repo1").mock(
+        return_value=httpx.Response(
+            200,
+            json={"full_name": "owner/repo1", "default_branch": "main", "archived": False},
+            headers=_rl_headers(),
+        )
+    )
+    for path in ("issues", "branches"):
+        respx.get(f"https://api.github.com/repos/owner/repo1/{path}").mock(
+            return_value=httpx.Response(200, json=[], headers=_rl_headers())
+        )
+    respx.get("https://api.github.com/repos/owner/repo1/actions/workflows").mock(
+        return_value=httpx.Response(
+            200, json={"total_count": 0, "workflows": []}, headers=_rl_headers()
+        )
+    )
+    respx.get("https://api.github.com/repos/owner/repo1/branches/main").mock(
+        return_value=httpx.Response(404, json={"message": "Not Found"}, headers=_rl_headers())
+    )
+    route = respx.get("https://api.github.com/repos/owner/repo1/pulls")
+    if isinstance(pulls, list):
+        route.side_effect = pulls
+    else:
+        route.return_value = pulls
+    return route
+
+
+def _pulls_response(pulls: list[dict], etag: str = '"v1"') -> httpx.Response:
+    return httpx.Response(200, json=pulls, headers={**_rl_headers(), "ETag": etag})
+
+
+def _not_modified() -> httpx.Response:
+    return httpx.Response(304, headers=_rl_headers())
+
+
+def _bots_config() -> GrimoireConfig:
+    config = _make_config()
+    config.prs = PRsConfig(groups=[_BOTS])
+    return config
+
+
+def _items(stats: RepositoryStats) -> dict[int, OpenPullRequest]:
+    return {item.number: item for item in stats.open_pr_items}
+
+
+@respx.mock
+async def test_fetch_stats_keeps_every_open_pull_request(client: GitHubClient) -> None:
+    """The pulls list already holds what the PRs page needs: no extra request is made."""
+    pulls = _mock_refresh_routes(
+        _pulls_response(
+            [
+                _pull(
+                    12,
+                    auto_merge={"enabled_by": {"login": "x"}, "merge_method": "squash"},
+                    labels=[{"name": "dependencies"}, {"name": "renovate"}],
+                ),
+                _pull(13, author="alice", draft=True, base={"ref": "develop"}),
+            ]
+        )
+    )
+    repo = TrackedRepository(full_name="owner/repo1", default_branch="main", branches=["main"])
+
+    stats = await fetch_repository_stats(repo, client, StalenessConfig())
+
+    assert pulls.call_count == 1
+    assert stats.open_pull_requests == 2
+    items = _items(stats)
+    assert items[12] == OpenPullRequest(
+        number=12,
+        title="Update dependency 12",
+        url="https://github.com/owner/repo1/pull/12",
+        author="renovate[bot]",
+        created_at=datetime(2026, 3, 1, 10, tzinfo=UTC),
+        updated_at=datetime(2026, 3, 2, 10, tzinfo=UTC),
+        labels=["dependencies", "renovate"],
+        base_ref="main",
+        head_ref="renovate/dep-12",
+        head_sha=f"{12:040d}",
+        auto_merge=True,
+    )
+    assert items[13].draft and items[13].base_ref == "develop" and not items[13].auto_merge
+
+
+@respx.mock
+async def test_refresh_asks_ci_only_for_group_matching_prs(
+    client: GitHubClient, engine: AsyncEngine
+) -> None:
+    _mock_refresh_routes(
+        _pulls_response([_pull(1), _pull(2, author="alice"), _pull(3, author="dependabot[bot]")])
+    )
+    graphql = respx.post(_GRAPHQL_URL).mock(return_value=_rollups({1: "FAILURE", 3: "SUCCESS"}))
+
+    _, stats = await refresh_all_stats(_bots_config(), client)
+
+    assert graphql.call_count == 1
+    query = json.loads(graphql.calls[0].request.content)["query"]
+    assert "pullRequest(number: 1)" in query and "pullRequest(number: 3)" in query
+    assert "pullRequest(number: 2)" not in query
+    items = _items(stats[0])
+    assert items[1].ci_state == "failure" and items[3].ci_state == "success"
+    assert items[1].review_decision == "review_required" and items[1].merge_state == "blocked"
+    assert items[1].ci_fetched_at is not None
+    assert items[2].ci_state is None and items[2].ci_fetched_at is None
+    # the state is persisted
+    _, loaded = await load_stats_from_db(engine)
+    assert _items(loaded[0]) == items
+
+
+@respx.mock
+async def test_refresh_without_groups_makes_no_graphql_call(client: GitHubClient) -> None:
+    _mock_refresh_routes(_pulls_response([_pull(1)]))
+    graphql = respx.post(_GRAPHQL_URL).mock(return_value=_rollups({1: "SUCCESS"}))
+
+    _, stats = await refresh_all_stats(_make_config(), client)
+
+    assert graphql.call_count == 0
+    assert _items(stats[0])[1].ci_state is None
+
+
+@respx.mock
+async def test_refresh_batches_ci_requests_by_twenty(client: GitHubClient) -> None:
+    _mock_refresh_routes(_pulls_response([_pull(n) for n in range(1, 121)]))
+    graphql = respx.post(_GRAPHQL_URL).mock(
+        side_effect=lambda request: _rollups(
+            {
+                int(part.split(")")[0]): "SUCCESS"
+                for part in json.loads(request.content)["query"].split("pullRequest(number: ")[1:]
+            }
+        )
+    )
+
+    _, stats = await refresh_all_stats(_bots_config(), client)
+
+    sizes = [
+        json.loads(call.request.content)["query"].count("pullRequest(number:")
+        for call in graphql.calls
+    ]
+    assert sizes == [20] * 6
+    assert {item.ci_state for item in stats[0].open_pr_items} == {"success"}
+
+
+@respx.mock
+async def test_not_modified_pulls_keep_the_items_and_still_refresh_ci(
+    client: GitHubClient,
+) -> None:
+    _mock_refresh_routes([_pulls_response([_pull(1), _pull(2)]), _not_modified()])
+    graphql = respx.post(_GRAPHQL_URL).mock(
+        side_effect=[
+            _rollups({1: "PENDING", 2: "SUCCESS"}),
+            _rollups({1: "SUCCESS", 2: "FAILURE"}),
+        ]
+    )
+    config = _bots_config()
+
+    await refresh_all_stats(config, client)
+    _, stats = await refresh_all_stats(config, client)
+
+    assert graphql.call_count == 2
+    items = _items(stats[0])
+    assert sorted(items) == [1, 2]
+    assert items[1].title == "Update dependency 1"
+    assert (items[1].ci_state, items[2].ci_state) == ("success", "failure")
+
+
+@respx.mock
+async def test_closed_pull_request_disappears_on_the_next_list(
+    client: GitHubClient, engine: AsyncEngine
+) -> None:
+    _mock_refresh_routes(
+        [_pulls_response([_pull(1), _pull(2)]), _pulls_response([_pull(2)], etag='"v2"')]
+    )
+    respx.post(_GRAPHQL_URL).mock(return_value=_rollups({1: "SUCCESS", 2: "SUCCESS"}))
+    config = _bots_config()
+
+    await refresh_all_stats(config, client)
+    _, stats = await refresh_all_stats(config, client)
+
+    assert sorted(_items(stats[0])) == [2]
+    async with AsyncSession(engine) as session:
+        rows = (await session.exec(select(CachedOpenPullRequest))).all()
+    assert [row.number for row in rows] == [2]
+
+
+@respx.mock
+async def test_failed_ci_batch_keeps_the_previous_state_of_an_unchanged_head(
+    client: GitHubClient,
+) -> None:
+    _mock_refresh_routes([_pulls_response([_pull(1)]), _not_modified()])
+    graphql = respx.post(_GRAPHQL_URL).mock(
+        side_effect=[_rollups({1: "FAILURE"})]
+        + [httpx.Response(502, text="bad gateway", headers=_GRAPHQL_HEADERS)] * 3
+    )
+    config = _bots_config()
+
+    await refresh_all_stats(config, client)
+    _, stats = await refresh_all_stats(config, client)
+
+    assert graphql.call_count == 4  # the failing request is retried
+    item = _items(stats[0])[1]
+    assert (item.ci_state, item.review_decision, item.merge_state) == (
+        "failure",
+        "review_required",
+        "blocked",
+    )
+    assert item.ci_fetched_at is not None
+    assert any(
+        w.startswith("Could not fetch CI status for owner/repo1") for w in stats[0].warnings
+    )
+
+
+@respx.mock
+async def test_failed_ci_batch_clears_the_state_of_a_new_head(client: GitHubClient) -> None:
+    _mock_refresh_routes(
+        [_pulls_response([_pull(1)]), _pulls_response([_pull(1, sha="f" * 40)], etag='"v2"')]
+    )
+    respx.post(_GRAPHQL_URL).mock(
+        side_effect=[_rollups({1: "SUCCESS"})]
+        + [httpx.Response(502, text="bad gateway", headers=_GRAPHQL_HEADERS)] * 3
+    )
+    config = _bots_config()
+
+    await refresh_all_stats(config, client)
+    _, stats = await refresh_all_stats(config, client)
+
+    item = _items(stats[0])[1]
+    assert item.head_sha == "f" * 40
+    assert item.ci_state is None and item.review_decision is None and item.merge_state is None
+    assert item.ci_fetched_at is None
+    assert stats[0].open_pr_items  # the list itself is still shown
+    assert any("Could not fetch CI status" in w for w in stats[0].warnings)
+
+
+@respx.mock
+async def test_ci_missing_from_the_answer_keeps_the_previous_state(client: GitHubClient) -> None:
+    _mock_refresh_routes([_pulls_response([_pull(1)]), _not_modified()])
+    respx.post(_GRAPHQL_URL).mock(
+        side_effect=[
+            _rollups({1: "SUCCESS"}),
+            httpx.Response(
+                200,
+                json={
+                    "data": {"r0": {"p1": None}},
+                    "errors": [{"type": "NOT_FOUND", "path": ["r0", "p1"], "message": "gone"}],
+                },
+                headers=_GRAPHQL_HEADERS,
+            ),
+        ]
+    )
+    config = _bots_config()
+
+    await refresh_all_stats(config, client)
+    _, stats = await refresh_all_stats(config, client)
+
+    assert _items(stats[0])[1].ci_state == "success"
+    assert stats[0].warnings == []
+
+
+@respx.mock
+async def test_graphql_does_not_change_the_rest_rate_limit(client: GitHubClient) -> None:
+    _mock_refresh_routes(_pulls_response([_pull(1)]))
+    respx.post(_GRAPHQL_URL).mock(
+        return_value=httpx.Response(
+            200,
+            json=_rollups({1: "SUCCESS"}).json(),
+            headers={**_GRAPHQL_HEADERS, "X-RateLimit-Remaining": "1"},
+        )
+    )
+
+    await refresh_all_stats(_bots_config(), client)
+
+    assert client.rate_limit_remaining == 4999
+    assert not client.is_degraded
+
+
+async def test_open_pull_requests_round_trip_through_the_cache(engine: AsyncEngine) -> None:
+    repos = [TrackedRepository(full_name="owner/repo1", default_branch="main", branches=["main"])]
+    item = OpenPullRequest(
+        number=5,
+        title="Update foo",
+        url="https://github.com/owner/repo1/pull/5",
+        author="renovate[bot]",
+        created_at=datetime(2026, 3, 1, 10, tzinfo=UTC),
+        updated_at=datetime(2026, 3, 2, 10, tzinfo=UTC),
+        draft=True,
+        labels=["dependencies", "a, b"],
+        base_ref="main",
+        head_ref="renovate/foo",
+        head_sha="abc",
+        auto_merge=True,
+        ci_state="pending",
+        review_decision="changes_requested",
+        merge_state="dirty",
+        ci_fetched_at=datetime(2026, 3, 3, 10, tzinfo=UTC),
+    )
+    bare = OpenPullRequest(
+        number=6,
+        title="Other",
+        url="https://github.com/owner/repo1/pull/6",
+        created_at=datetime(2026, 3, 1, tzinfo=UTC),
+    )
+    stats = RepositoryStats(
+        full_name="owner/repo1",
+        default_branch="main",
+        open_pr_items=[item, bare],
+        fetched_at=datetime.now(UTC),
+    )
+
+    await save_stats_to_db(engine, [stats], repos)
+    _, loaded = await load_stats_from_db(engine)
+
+    assert loaded[0].open_pr_items == [item, bare]
+
+
+async def test_save_replaces_the_open_pull_requests_of_a_repo(engine: AsyncEngine) -> None:
+    repos = [TrackedRepository(full_name="owner/repo1", default_branch="main", branches=["main"])]
+
+    def stats(*numbers: int) -> RepositoryStats:
+        return RepositoryStats(
+            full_name="owner/repo1",
+            default_branch="main",
+            open_pr_items=[
+                OpenPullRequest(number=n, title="t", url="u", created_at=datetime.now(UTC))
+                for n in numbers
+            ],
+        )
+
+    await save_stats_to_db(engine, [stats(1, 2)], repos)
+    await save_stats_to_db(engine, [stats(2, 3)], repos)
+
+    _, loaded = await load_stats_from_db(engine)
+    assert [i.number for i in loaded[0].open_pr_items] == [2, 3]

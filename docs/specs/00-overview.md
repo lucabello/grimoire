@@ -28,7 +28,7 @@ grimoire/
 │   ├── database.py               # SQLModel engine + session + upgrade_database
 │   ├── migrations/               # Alembic environment + revisions (versions/)
 │   ├── targeting.py              # Shared target resolution (list/regex/script)
-│   ├── maintenance.py            # Maintenance PR groups: GitHub search query/link builder + API
+│   ├── prs.py                    # PR groups: matcher, grouping, page filters + API
 │   ├── github/
 │   │   ├── __init__.py
 │   │   ├── client.py             # Low-level GitHub API wrapper
@@ -57,7 +57,7 @@ grimoire/
 │   │   │   ├── dashboard.html
 │   │   │   ├── repository.html
 │   │   │   ├── actions.html
-│   │   │   └── maintenance.html
+│   │   │   └── prs.html
 │   │   └── static/
 │   │       └── styles.css        # Tailwind output
 │   └── observability/
@@ -147,13 +147,12 @@ repositories:
     workflows:
       exclude: ["Release *"]       # applies to all repos from this team
 
-# Maintenance PR groups: Grimoire builds GitHub search links, it stores no PRs
-maintenance:
+# PRs page: named groups of the open PRs of the tracked repos (with their CI state)
+prs:
   groups:
-    - name: "renovate"
-      authors: ["app/renovate"]
+    - name: "Maintenance"
+      authors: ["app/renovate", "app/dependabot"]   # app/x also matches x[bot]
       labels: ["dependencies"]
-      status: failure
       repos: ["owner/*"]           # optional; default: all tracked repos
 
 # Staleness thresholds
@@ -186,7 +185,7 @@ log_file: "./grimoire.log"
 | `GET` | `/api/actions/{slug}/runs` | List run history |
 | `GET` | `/api/actions/{slug}/runs/{id}` | Get specific run details + logs |
 | `POST` | `/api/actions/{slug}/run` | Trigger action (optional `?repo=`); 409 if running |
-| `GET` | `/api/maintenance/groups` | GitHub PR search `query` + `url` per maintenance group (config + tracked repos only; no GitHub calls) |
+| `GET` | `/api/prs` | Open PRs of each configured PR group with CI, review and merge state (cache only; no GitHub calls) |
 | `GET` | `/health` | Health check (for Docker HEALTHCHECK / k8s probes) |
 
 Auto-generated OpenAPI docs are available at `/docs` (Swagger UI) and `/redoc`.
@@ -197,6 +196,6 @@ Auto-generated OpenAPI docs are available at `/docs` (Swagger UI) and `/redoc`.
 - **Concurrency:** GitHub API calls and check executions use bounded concurrency (`asyncio.Semaphore(10)`) to avoid overwhelming the API or the host.
 - **Error handling:** Individual check/action failures never crash the application. Log errors, record failure in DB, continue with remaining repos. GitHub API failures are surfaced as per-repo warnings on the dashboard — never silent failures.
 - **Disk caching:** All GitHub data is persisted to SQLite. On startup, the app loads cached data and is immediately usable. Refreshes happen in the background. The dashboard always shows the `fetched_at` timestamp so the user knows data freshness.
-- **API efficiency:** Use conditional requests (ETags) and `per_page=100` to minimize GitHub API calls. GraphQL batching is deferred as a future optimization. After initial fetch, most refreshes cost zero API calls due to ETags.
+- **API efficiency:** Use conditional requests (ETags) and `per_page=100` to minimize GitHub API calls. GraphQL is used only to batch the CI, review and merge state of the PRs that match a PR group (about one point of the separate GraphQL limit per 50 PRs). After initial fetch, most REST refreshes cost zero API calls due to ETags.
 - **Idempotency:** Re-running a check or action for the same repo+branch is always safe. The DB stores all results (not just latest).
 - **Testing strategy:** Use `respx` for GitHub API mocking, temp directories for workspace tests, and `httpx.AsyncClient` (via FastAPI's `TestClient`) for API endpoint tests.

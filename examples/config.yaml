@@ -65,17 +65,16 @@ refresh_schedule: "*/5 * * * *"
 #         - "org/critical-repo"
 #       weight: 5.0
 
-# Maintenance PR groups: Grimoire builds a GitHub search link per group over the
-# tracked repositories (it does not fetch or store the PRs). See the Maintenance page.
-# maintenance:
+# PRs page: named groups of the open PRs of the tracked repositories, with their CI
+# status. Values of one list are alternatives; different fields must all match.
+# prs:
 #   groups:
-#     - name: "renovate"
-#       authors: ["app/renovate"]   # alternatives; bots are "app/<name>"
+#     - name: "Maintenance"
+#       authors: ["app/renovate", "app/dependabot"]   # also matches renovate[bot]
 #       labels: ["dependencies"]    # alternatives
-#       title_words: ["deps"]       # words searched in the title (not a regex)
+#       title_words: ["deps"]       # case-insensitive words in the title (not a regex)
 #       draft: false
 #       base: main
-#       status: failure             # success | failure | pending
 #       repos: ["owner/*"]          # optional fnmatch scope; default: all tracked repos
 
 # Paths

@@ -3,7 +3,9 @@
 from __future__ import annotations
 
 import asyncio
+import json
 import logging
+from dataclasses import dataclass
 from typing import Any
 
 import httpx
@@ -47,6 +49,39 @@ _MAX_RETRIES = 3
 _DEFAULT_BACKOFF_FACTORS = (1.0, 2.0, 4.0)
 _TRANSIENT_STATUS_CODES = frozenset(range(500, 600))
 
+# Pull requests per GraphQL request. Every request costs one point, but GitHub computes the
+# check rollups while answering and gives up with a 502 after about 10 s: 20 pull requests
+# took 3-7 s on real repositories, 50 timed out.
+ROLLUP_BATCH_SIZE = 20
+
+_CI_STATES = {
+    "SUCCESS": "success",
+    "FAILURE": "failure",
+    "ERROR": "failure",
+    "PENDING": "pending",
+    "EXPECTED": "pending",
+}
+
+
+@dataclass(frozen=True)
+class PRRollup:
+    """CI, review and merge state of one pull request, as reported by GraphQL."""
+
+    ci_state: str  # "success" | "failure" | "pending" | "none" (no checks at all)
+    review_decision: str | None
+    merge_state: str | None
+
+
+def _parse_rollup(pr_data: dict[str, Any]) -> PRRollup:
+    rollup = pr_data.get("statusCheckRollup")
+    review = pr_data.get("reviewDecision")
+    merge = pr_data.get("mergeStateStatus")
+    return PRRollup(
+        ci_state="none" if rollup is None else _CI_STATES.get(rollup["state"], "pending"),
+        review_decision=review.lower() if review else None,
+        merge_state=merge.lower() if merge else None,
+    )
+
 
 # ---------------------------------------------------------------------------
 # Client
@@ -54,7 +89,7 @@ _TRANSIENT_STATUS_CODES = frozenset(range(500, 600))
 
 
 class GitHubClient:
-    """Thin async wrapper around the GitHub REST API."""
+    """Thin async wrapper around the GitHub REST API (plus one batched GraphQL query)."""
 
     def __init__(
         self,
@@ -203,7 +238,52 @@ class GitHubClient:
         owner, repo = full_name.split("/", 1)
         return await self._request("GET", f"/repos/{owner}/{repo}/git/commits/{sha}")
 
-    # -- internal helpers ----------------------------------------------------
+    async def get_pull_request_rollups(
+        self, prs: list[tuple[str, int]]
+    ) -> dict[tuple[str, int], PRRollup]:
+        """Return CI, review and merge state for ``(full_name, number)`` pull requests.
+
+        One GraphQL request for up to ``ROLLUP_BATCH_SIZE`` pull requests (one point of
+        the GraphQL rate limit). Repositories and pull requests GitHub cannot
+        find are absent from the result.
+        """
+        by_repo: dict[str, list[int]] = {}
+        for full_name, number in prs:
+            by_repo.setdefault(full_name, []).append(number)
+
+        fields = "reviewDecision mergeStateStatus statusCheckRollup { state }"
+        repo_blocks: list[str] = []
+        for index, (full_name, numbers) in enumerate(by_repo.items()):
+            owner, name = full_name.split("/", 1)
+            pulls = " ".join(f"p{n}: pullRequest(number: {n}) {{ {fields} }}" for n in numbers)
+            repo_blocks.append(
+                f"r{index}: repository(owner: {json.dumps(owner)}, name: {json.dumps(name)}) "
+                f"{{ {pulls} }}"
+            )
+        query = "query { " + " ".join(repo_blocks) + " }"
+
+        body = await self._request("POST", "/graphql", json_body={"query": query}, use_etag=False)
+
+        errors = body.get("errors") or []
+        if any(e.get("type") == "RATE_LIMITED" for e in errors):
+            raise RateLimitError("GitHub GraphQL rate limit exceeded")
+        # A repository or pull request that does not exist is a null alias, not a failure
+        failures = [e for e in errors if e.get("type") != "NOT_FOUND"]
+        data = body.get("data")
+        if failures or data is None:
+            message = failures[0].get("message", "no data") if failures else "no data"
+            raise GitHubAPIError(f"GraphQL query failed: {message}")
+
+        rollups: dict[tuple[str, int], PRRollup] = {}
+        for index, (full_name, numbers) in enumerate(by_repo.items()):
+            repo_data = data.get(f"r{index}")
+            if not repo_data:
+                continue
+            for number in numbers:
+                pr_data = repo_data.get(f"p{number}")
+                if pr_data:
+                    rollups[(full_name, number)] = _parse_rollup(pr_data)
+        return rollups
 
     async def _paginated_get(
         self,
@@ -249,6 +329,7 @@ class GitHubClient:
         params: dict[str, Any] | None = None,
         *,
         use_etag: bool = True,
+        json_body: Any = None,
     ) -> Any:
         """Execute a single API request with ETag caching, retries, and rate-limit tracking."""
         # Build the URL for ETag keying (path + sorted params)
@@ -269,15 +350,10 @@ class GitHubClient:
                 if last_modified_header:
                     headers["If-Modified-Since"] = last_modified_header
 
-                # If path is a full URL (from pagination), use it directly
-                if path.startswith("https://"):
-                    response = await self._http.request(
-                        method, path, headers=headers, params=params
-                    )
-                else:
-                    response = await self._http.request(
-                        method, path, headers=headers, params=params
-                    )
+                # A full URL (from pagination) overrides the client's base URL
+                response = await self._http.request(
+                    method, path, headers=headers, params=params, json=json_body
+                )
 
                 self._update_rate_limit(response)
                 self._last_next_link = self._parse_next_link(response)
@@ -358,6 +434,9 @@ class GitHubClient:
     # -- rate limit ----------------------------------------------------------
 
     def _update_rate_limit(self, response: httpx.Response) -> None:
+        # The GraphQL bucket is separate from REST; it must not drive the REST tracker
+        if response.headers.get("X-RateLimit-Resource") == "graphql":
+            return
         remaining = response.headers.get("X-RateLimit-Remaining")
         limit = response.headers.get("X-RateLimit-Limit")
         reset = response.headers.get("X-RateLimit-Reset")

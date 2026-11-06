@@ -106,15 +106,14 @@ dashboard:                      # optional — dashboard presentation
       match: ["nightly*"]
   show_other: true              # default: true — trailing "Other" column for unmatched workflows
 
-maintenance:                    # optional — PR groups that link to GitHub searches (spec 6.11)
+prs:                            # optional — groups of open PRs for the PRs page (spec 6.11)
   groups:
-    - name: renovate            # unique, non-blank
-      authors: ["app/renovate"] # alternatives (OR); bots are written "app/<name>"
-      labels: ["dependencies"]  # alternatives (OR)
-      title_words: ["deps"]     # alternatives (OR); words/phrases searched in the title, NOT a regex
+    - name: Maintenance         # unique, non-blank
+      authors: ["app/renovate"] # alternatives (OR); ignores case, a leading "app/" and a trailing "[bot]"
+      labels: ["dependencies"]  # alternatives (OR); case-insensitive exact label name
+      title_words: ["deps"]     # alternatives (OR); case-insensitive substrings of the title, NOT a regex
       draft: false              # true | false
       base: main                # target branch
-      status: failure           # success | failure | pending (commit status; GitHub's pending also matches PRs with no statuses)
       repos: ["owner/*"]        # optional fnmatch scope on tracked full names; default: all tracked repos
 
 staleness:
@@ -148,9 +147,9 @@ log_file: "./grimoire.log"
 - `BacklogConfig(category_weights: BacklogCategoryWeights = BacklogCategoryWeights(), workflow_weights: dict[str, float] = {}, repository_weights: list[RepositoryWeightRule] = [])` — `workflow_weights` maps glob patterns on workflow name to multipliers; `repository_weights` maps repos to backlog score multipliers and defaults to `1.0` when no rule matches
 - `WorkflowGroup(name: str, match: list[str])` — `name` must be non-blank (stripped); `match` must be non-empty; case-sensitive glob patterns (`fnmatchcase`) on workflow name
 - `DashboardConfig(workflow_groups: list[WorkflowGroup] = [], show_other: bool = True)` — group names must be unique and, when `show_other` is true, must not be "Other"; with no groups, all workflows share one "Workflows" column
-- `MaintenanceGroup(name: str, authors: list[str] = [], labels: list[str] = [], title_words: list[str] = [], draft: bool | None = None, base: str | None = None, status: Literal["success", "failure", "pending"] | None = None, repos: list[str] = [])` — `name` must be non-blank (stripped); list entries and `base` must be non-blank and must not contain `"` (they are quoted into a search query); at least one of `authors`, `labels`, `title_words`, `draft`, `base`, `status` is required (`repos` alone is not a matcher); `repos` are case-sensitive globs (`fnmatchcase`) on the tracked repository full name
-- `MaintenanceConfig(groups: list[MaintenanceGroup] = [])` — group names must be unique
-- `GrimoireConfig` — top-level model; `git: GitConfig | None = None` (optional); `backlog: BacklogConfig = BacklogConfig()` (optional); `dashboard: DashboardConfig = DashboardConfig()` (optional); `maintenance: MaintenanceConfig = MaintenanceConfig()` (optional)
+- `PRGroup(name: str, authors: list[str] = [], labels: list[str] = [], title_words: list[str] = [], draft: bool | None = None, base: str | None = None, repos: list[str] = [])` — `name` must be non-blank (stripped); list entries and `base` must be non-blank; at least one of `authors`, `labels`, `title_words`, `draft`, `base` is required (`repos` alone is not a matcher); `repos` are case-sensitive globs (`fnmatchcase`) on the tracked repository full name. Matching semantics are in spec 6.11
+- `PRsConfig(groups: list[PRGroup] = [])` — group names must be unique
+- `GrimoireConfig` — top-level model; `git: GitConfig | None = None` (optional); `backlog: BacklogConfig = BacklogConfig()` (optional); `dashboard: DashboardConfig = DashboardConfig()` (optional); `prs: PRsConfig = PRsConfig()` (optional)
 
 ### Config loading
 
@@ -198,6 +197,25 @@ class WorkflowStatus(BaseModel):
     run_started_at: datetime | None = None
     updated_at: datetime | None = None
 
+class OpenPullRequest(BaseModel):
+    number: int
+    title: str
+    url: str                # html_url
+    author: str = ""        # raw login, e.g. "renovate[bot]"
+    created_at: datetime
+    updated_at: datetime | None = None
+    draft: bool = False
+    labels: list[str] = []
+    base_ref: str = ""
+    head_ref: str = ""
+    head_sha: str = ""
+    auto_merge: bool = False
+    # From GraphQL, only for PRs matching a PR group; None = not fetched
+    ci_state: str | None = None          # "success" | "failure" | "pending" | "none" (no checks)
+    review_decision: str | None = None   # "approved" | "changes_requested" | "review_required"
+    merge_state: str | None = None       # lower-cased MergeStateStatus ("clean", "dirty", "behind", "blocked", …)
+    ci_fetched_at: datetime | None = None
+
 class RepositoryStats(BaseModel):
     full_name: str
     default_branch: str
@@ -205,6 +223,7 @@ class RepositoryStats(BaseModel):
     stale_issues: int
     open_pull_requests: int
     stale_pull_requests: int
+    open_pr_items: list[OpenPullRequest] = []   # every open PR (spec 2.2); stale items are kept apart
     workflows: list[WorkflowStatus]
     warnings: list[str]     # e.g., "Failed to fetch issues", "Data is 2h stale"
     fetched_at: datetime
@@ -247,6 +266,7 @@ SQLModel table models for persistent state:
 | `CachedRepository` | Cached repo metadata (full_name, default_branch, source, fetched_at) |
 | `CachedIssue` | Cached open issues (repo, title, number, url, timestamps, fetched_at) |
 | `CachedPullRequest` | Cached open PRs (repo, title, number, url, author, timestamps, fetched_at) |
+| `CachedOpenPullRequest` | Every open PR of a tracked repo for the PRs page (repo, number, title, url, author, timestamps, draft, `labels_json`, refs, head SHA, auto-merge, nullable CI/review/merge state + `ci_fetched_at`, fetched_at) |
 | `CachedWorkflowStatus` | Cached workflow statuses (repo, name, branch, status, url, run_url, last-run details, fetched_at) |
 | `CachedETag` | GitHub API ETags for conditional requests (endpoint, etag, last_modified) |
 
@@ -268,6 +288,7 @@ The schema is versioned with Alembic. The migrations live in the `src/grimoire/m
   1. **Fresh database** (no tables): runs every revision up to head.
   2. **Unversioned database** (tables but no `alembic_version`, i.e. created before migrations): the real schema decides. If `cached_workflow_status` already has the run-detail columns it is stamped with the run-details revision (`RUN_DETAILS_REVISION`, never `head`, so later revisions are still applied); otherwise it is stamped at the baseline. It is then upgraded to head. Existing rows are kept.
   3. **Versioned database**: upgrades to head (a no-op when current).
+- A revision may also migrate data. The open-pull-requests revision creates `cached_open_pull_request` and deletes the stored ETags of the pulls lists (`endpoint_url LIKE '%/pulls?%'`, which includes the `&page=N` keys): without that, a `304 Not Modified` would keep reusing a cached list that has no PR rows and the PRs page would stay empty until some PR changed. Its downgrade drops only the table.
 - Changing a SQLModel table requires a revision in the same change: run `just migration "message"` (autogenerate against a scratch database at the current head), review the generated file and commit it. `tests/test_migrations/test_revisions.py` fails when the migrated schema differs from `SQLModel.metadata`.
 
 ## 1.5 — Example Config & justfile
@@ -291,4 +312,4 @@ The schema is versioned with Alembic. The migrations live in the `src/grimoire/m
 - [ ] The migrated schema matches the SQLModel models (drift test)
 - [ ] `just dev` starts the server on port 8000, returns 200 on `GET /`
 - [ ] Tests cover config parsing (valid input, missing fields, invalid values)
-- [ ] A config without `maintenance` loads with no groups; duplicate/blank group names, groups without a matcher, blank list entries and an invalid `status` fail validation with a clear message
+- [ ] A config without `prs` loads with no groups; duplicate/blank group names, groups without a matcher and blank list entries fail validation with a clear message

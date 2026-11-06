@@ -244,7 +244,10 @@ async def test_upgrade_legacy_database_keeps_data(tmp_path: Path) -> None:
 
 
 async def test_upgrade_unversioned_current_database_is_stamped(tmp_path: Path) -> None:
-    """A database made by `create_all` after the run details is adopted without changes."""
+    """A database made by `create_all` after the run details is adopted, keeping its data.
+
+    Only the objects of the later revisions are added.
+    """
     db = tmp_path / "current.db"
     await create_unversioned_current_database(db)
     before = read_all(db)
@@ -255,8 +258,14 @@ async def test_upgrade_unversioned_current_database_is_stamped(tmp_path: Path) -
     await engine.dispose()
 
     assert revision_of(db) == head_revision()
-    assert read_all(db) == before
-    assert [s for s in schema_snapshot(db) if "alembic_version" not in s[1]] == schema
+    after = read_all(db)
+    assert after.pop("cached_open_pull_request") == []
+    assert after == before
+    assert [
+        s
+        for s in schema_snapshot(db)
+        if "alembic_version" not in s[1] and "cached_open_pull_request" not in s[1]
+    ] == schema
 
 
 @pytest.mark.parametrize("state", ["fresh", "legacy", "unversioned"])

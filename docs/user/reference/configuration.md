@@ -227,44 +227,37 @@ Hidden workflows (`show_other: false`) are only hidden from display: they still 
 
 ---
 
-## `maintenance` {: #maintenance }
+## `prs` {: #prs }
 
-**Optional.** Groups of pull requests that you want to look at together across all tracked repositories, for example Renovate PRs or the PRs of one person. Grimoire does not fetch or store these PRs: for each group it builds a **GitHub search query** over your tracked repositories (including the ones resolved from teams) and a link that opens it on GitHub. The groups are listed on the **Maintenance** page and in the [REST API](api.md#maintenance).
+**Optional.** Named groups of the open pull requests of your tracked repositories (including the ones resolved from teams), shown on the **PRs** page with their CI status, for example the PRs opened by Renovate, Dependabot or a bot of your own. The groups are also served by the [REST API](api.md#prs).
 
 ```yaml
-maintenance:
+prs:
   groups:
-    - name: "renovate"
-      authors: ["app/renovate"]
-      labels: ["dependencies"]
-      status: failure
-      repos: ["org-name/*"]
+    - name: "Maintenance"
+      authors: ["app/renovate", "app/dependabot", "my-team-bot"]
     - name: "alice"
       authors: ["alice"]
       draft: false
+      repos: ["org-name/*"]
 ```
 
 | Field | Description |
 |-------|-------------|
 | `name` | Required, non-blank, unique among the groups. |
-| `authors` | PR authors. Bots are written `app/<name>` (for example `app/renovate`). |
-| `labels` | PR labels. |
-| `title_words` | Words or phrases searched in the PR title. They are plain words, not a regular expression: GitHub search has no regex. |
+| `authors` | PR authors. Case is ignored, and so are a leading `app/` and a trailing `[bot]`: `app/renovate` matches the PRs of `renovate[bot]`. |
+| `labels` | PR labels (case-insensitive, exact name). |
+| `title_words` | Words or phrases that must appear in the PR title (case-insensitive substring, not a regular expression). |
 | `draft` | `true` for draft PRs only, `false` for PRs ready for review. |
 | `base` | Target branch of the PR. |
-| `status` | Commit status: `success`, `failure` or `pending`. GitHub's `status:pending` also matches PRs that have no statuses at all (on `canonical/operator`, 23 of 33 open PRs matched `pending`). |
 | `repos` | Optional. Case-sensitive glob patterns on the tracked repository full names (`org-name/*`). Default: all tracked repositories. |
 
-At least one of `authors`, `labels`, `title_words`, `draft`, `base` or `status` is required, and list entries must not be blank or contain a double quote. Several values in one list are alternatives (any author, any label, any word); different fields must all match. The query always starts with `is:pr is:open`.
+At least one of `authors`, `labels`, `title_words`, `draft` or `base` is required, and list entries must not be blank. Several values in one list are alternatives (any author, any label, any word); different fields must all match. A PR that matches several groups is listed in each of them.
 
-The query lists the tracked repositories one by one with `repo:` qualifiers, so it never includes a repository Grimoire does not track. A group whose `repos` patterns match no tracked repository has no link. GitHub refuses very long links (about 8 KB), so with a very large number of repositories a group is split into several links ("Part 1 of 2", …); open every part.
+Grimoire reads the PRs from the pull request lists it already fetches for the dashboard, so they cost no additional API request. The CI, review and merge state of the PRs that match a group is read with one [GraphQL](https://docs.github.com/en/graphql) request per 20 PRs, using the same token. That uses GitHub's separate GraphQL rate limit (one point per request) and nothing when no group is configured. If GitHub cannot answer, the PRs are still listed (with their last known state, if any) and the page shows a warning.
 
-!!! warning "Check one multi-value link"
-    The queries use GitHub's advanced search syntax (`( … OR … )`). GitHub's API evaluates it when asked (`advanced_search=true`), but what `https://github.com/pulls?q=` does with a parenthesised query is **unverified**: GitHub's documentation names the repository issues page and the issues dashboard, not the pull requests page, and the page needs a login so it could not be tested. Before relying on a group with several authors, labels, title words or repositories, click one of its links and confirm the result matches what you expect. Groups with a single value per field and one repository use plain qualifiers.
-
-    Values that are search keywords (`OR`, `AND`, `NOT`) or that start with `-` are quoted, so they are searched as literal words.
-
-    To run a query yourself, see the [API reference](api.md#maintenance).
+!!! note "Pending CI"
+    The CI badge shows the combined state GitHub reports for the PR's latest commit. A Renovate PR that waits for a `stability-days` check is pending until that delay passes.
 
 ---
 
@@ -352,11 +345,10 @@ backlog:
         - "org/critical-repo"
       weight: 5.0
 
-maintenance:
+prs:
   groups:
-    - name: "renovate"
-      authors: ["app/renovate"]
-      labels: ["dependencies"]
+    - name: "Maintenance"
+      authors: ["app/renovate", "app/dependabot"]
       repos: ["org-name/*"]
 
 refresh_schedule: "*/5 * * * *"

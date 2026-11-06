@@ -78,7 +78,7 @@ Grimoire fetches data from the GitHub API immediately on startup. The dashboard 
 | Backlog | `/backlog` | Prioritised list of problems across repos |
 | Checks | `/checks` | Custom validation scripts and their results |
 | Actions | `/actions` | Automated remediation tasks and run logs |
-| Maintenance | `/maintenance` | Links to GitHub searches for groups of PRs (for example Renovate), if configured |
+| PRs | `/prs` | Open PRs of the configured groups (for example Renovate and Dependabot) with their CI status, if configured |
 | API docs | `/docs` | Interactive Swagger UI |
 
 ## What's next
