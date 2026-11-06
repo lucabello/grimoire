@@ -541,3 +541,118 @@ class TestDashboardConfig:
                 DashboardConfig.model_validate(
                     {"workflow_groups": [{"name": name, "match": ["x"]}]}
                 )
+
+
+class TestMaintenanceConfig:
+    def test_absent_block_means_no_groups(self, tmp_config: Path) -> None:
+        assert load_config(tmp_config).maintenance.groups == []
+
+    def test_loads_groups_from_yaml(self, tmp_path: Path) -> None:
+        config_file = tmp_path / "config.yaml"
+        config_file.write_text(
+            textwrap.dedent("""\
+            github:
+              token: "ghp_test"
+            repositories:
+              - repo: "owner/repo1"
+            maintenance:
+              groups:
+                - name: renovate
+                  authors: ["app/renovate"]
+                  labels: ["dependencies"]
+                  title_words: ["deps"]
+                  draft: false
+                  base: main
+                  status: failure
+                  repos: ["owner/*"]
+            """)
+        )
+        group = load_config(config_file).maintenance.groups[0]
+        assert group.name == "renovate"
+        assert group.authors == ["app/renovate"]
+        assert group.labels == ["dependencies"]
+        assert group.title_words == ["deps"]
+        assert group.draft is False
+        assert group.base == "main"
+        assert group.status == "failure"
+        assert group.repos == ["owner/*"]
+
+    def test_values_are_stripped(self) -> None:
+        from grimoire.config import MaintenanceConfig
+
+        config = MaintenanceConfig.model_validate(
+            {"groups": [{"name": " bots ", "authors": [" app/renovate "], "base": " main "}]}
+        )
+        group = config.groups[0]
+        assert (group.name, group.authors, group.base) == ("bots", ["app/renovate"], "main")
+
+    @pytest.mark.parametrize(
+        "matcher",
+        [
+            {"authors": ["alice"]},
+            {"labels": ["bug"]},
+            {"title_words": ["deps"]},
+            {"draft": True},
+            {"draft": False},
+            {"base": "main"},
+            {"status": "pending"},
+        ],
+    )
+    def test_each_matcher_alone_is_enough(self, matcher: dict[str, object]) -> None:
+        from grimoire.config import MaintenanceGroup
+
+        MaintenanceGroup.model_validate({"name": "g", **matcher})
+
+    @pytest.mark.parametrize(
+        ("group", "message"),
+        [
+            ({"name": "g"}, "at least one matcher"),
+            ({"name": "g", "repos": ["owner/*"]}, "at least one matcher"),
+            ({"name": "g", "authors": []}, "at least one matcher"),
+            ({"name": "", "authors": ["a"]}, "name must not be blank"),
+            ({"name": "   ", "authors": ["a"]}, "name must not be blank"),
+            ({"name": "g", "authors": ["a", ""]}, "'authors' values must not be blank"),
+            ({"name": "g", "labels": ["  "]}, "'labels' values must not be blank"),
+            ({"name": "g", "title_words": [""]}, "'title_words' values must not be blank"),
+            ({"name": "g", "authors": ["a"], "repos": [""]}, "'repos' values must not be blank"),
+            ({"name": "g", "base": " "}, "'base' values must not be blank"),
+            ({"name": "g", "status": "green"}, "success"),
+            ({"name": "g", "draft": "maybe"}, "draft"),
+            ({"name": "g", "labels": ['say "hi"']}, "double quotes"),
+            ({"name": "g", "authors": "alice"}, "authors"),
+        ],
+    )
+    def test_invalid_group_rejected(self, group: dict[str, object], message: str) -> None:
+        from pydantic import ValidationError
+
+        from grimoire.config import MaintenanceConfig
+
+        with pytest.raises(ValidationError, match=message):
+            MaintenanceConfig.model_validate({"groups": [group]})
+
+    def test_duplicate_names_rejected(self) -> None:
+        from pydantic import ValidationError
+
+        from grimoire.config import MaintenanceConfig
+
+        group = {"name": "renovate", "authors": ["app/renovate"]}
+        with pytest.raises(ValidationError, match="must be unique"):
+            MaintenanceConfig.model_validate({"groups": [group, {**group, "labels": ["x"]}]})
+
+    def test_invalid_group_fails_config_load(self, tmp_path: Path) -> None:
+        from pydantic import ValidationError
+
+        config_file = tmp_path / "config.yaml"
+        config_file.write_text(
+            textwrap.dedent("""\
+            github:
+              token: "ghp_test"
+            repositories:
+              - repo: "owner/repo1"
+            maintenance:
+              groups:
+                - name: empty
+            """)
+        )
+        with pytest.raises(ValidationError, match="at least one matcher"):
+            load_config(config_file)

@@ -104,6 +104,17 @@ dashboard:                      # optional — dashboard presentation
       match: ["nightly*"]
   show_other: true              # default: true — trailing "Other" column for unmatched workflows
 
+maintenance:                    # optional — PR groups that link to GitHub searches (spec 6.11)
+  groups:
+    - name: renovate            # unique, non-blank
+      authors: ["app/renovate"] # alternatives (OR); bots are written "app/<name>"
+      labels: ["dependencies"]  # alternatives (OR)
+      title_words: ["deps"]     # alternatives (OR); words/phrases searched in the title, NOT a regex
+      draft: false              # true | false
+      base: main                # target branch
+      status: failure           # success | failure | pending (commit status; GitHub's pending also matches PRs with no statuses)
+      repos: ["owner/*"]        # optional fnmatch scope on tracked full names; default: all tracked repos
+
 staleness:
   pull_requests_days: 30   # default: 30
   issues_days: 365         # default: 365
@@ -135,7 +146,9 @@ log_file: "./grimoire.log"
 - `BacklogConfig(category_weights: BacklogCategoryWeights = BacklogCategoryWeights(), workflow_weights: dict[str, float] = {}, repository_weights: list[RepositoryWeightRule] = [])` — `workflow_weights` maps glob patterns on workflow name to multipliers; `repository_weights` maps repos to backlog score multipliers and defaults to `1.0` when no rule matches
 - `WorkflowGroup(name: str, match: list[str])` — `name` must be non-blank (stripped); `match` must be non-empty; case-sensitive glob patterns (`fnmatchcase`) on workflow name
 - `DashboardConfig(workflow_groups: list[WorkflowGroup] = [], show_other: bool = True)` — group names must be unique and, when `show_other` is true, must not be "Other"; with no groups, all workflows share one "Workflows" column
-- `GrimoireConfig` — top-level model; `git: GitConfig | None = None` (optional); `backlog: BacklogConfig = BacklogConfig()` (optional); `dashboard: DashboardConfig = DashboardConfig()` (optional)
+- `MaintenanceGroup(name: str, authors: list[str] = [], labels: list[str] = [], title_words: list[str] = [], draft: bool | None = None, base: str | None = None, status: Literal["success", "failure", "pending"] | None = None, repos: list[str] = [])` — `name` must be non-blank (stripped); list entries and `base` must be non-blank and must not contain `"` (they are quoted into a search query); at least one of `authors`, `labels`, `title_words`, `draft`, `base`, `status` is required (`repos` alone is not a matcher); `repos` are case-sensitive globs (`fnmatchcase`) on the tracked repository full name
+- `MaintenanceConfig(groups: list[MaintenanceGroup] = [])` — group names must be unique
+- `GrimoireConfig` — top-level model; `git: GitConfig | None = None` (optional); `backlog: BacklogConfig = BacklogConfig()` (optional); `dashboard: DashboardConfig = DashboardConfig()` (optional); `maintenance: MaintenanceConfig = MaintenanceConfig()` (optional)
 
 ### Config loading
 
@@ -262,3 +275,4 @@ async def get_session(engine: AsyncEngine) -> AsyncSession: ...
 - [ ] Database tables are created on startup
 - [ ] `just dev` starts the server on port 8000, returns 200 on `GET /`
 - [ ] Tests cover config parsing (valid input, missing fields, invalid values)
+- [ ] A config without `maintenance` loads with no groups; duplicate/blank group names, groups without a matcher, blank list entries and an invalid `status` fail validation with a clear message

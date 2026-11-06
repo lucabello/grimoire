@@ -17,8 +17,14 @@ from sqlalchemy import text
 from sqlmodel import select
 from sqlmodel.ext.asyncio.session import AsyncSession
 
-from grimoire.config import DashboardConfig, StalenessConfig
+from grimoire.config import DashboardConfig, MaintenanceGroup, StalenessConfig
 from grimoire.database import ActionRunRecord
+from grimoire.maintenance import (
+    MaintenanceSearch,
+    build_group_searches,
+    get_maintenance_config,
+    tracked_repo_names,
+)
 from grimoire.models import TrackedRepository, WorkflowStatus
 from grimoire.targeting import TargetSpec
 from grimoire.web.backlog import (
@@ -809,6 +815,54 @@ async def checks_page(request: Request) -> HTMLResponse:
             "checks": check_vms,
             "time_ago": _time_ago,
         },
+    )
+
+
+@dataclass
+class MaintenanceGroupViewModel:
+    """Prepared data for rendering a maintenance group on the maintenance page."""
+
+    name: str
+    matchers: list[tuple[str, str]]
+    scope: str
+    searches: list[MaintenanceSearch]
+
+
+def _describe_matchers(group: MaintenanceGroup) -> list[tuple[str, str]]:
+    """Label/value pairs for the matchers a group sets (list values are alternatives)."""
+    pairs: list[tuple[str, str]] = []
+    if group.authors:
+        pairs.append(("authors", " or ".join(group.authors)))
+    if group.labels:
+        pairs.append(("labels", " or ".join(group.labels)))
+    if group.title_words:
+        pairs.append(("title words", " or ".join(group.title_words)))
+    if group.draft is not None:
+        pairs.append(("draft", str(group.draft).lower()))
+    if group.base is not None:
+        pairs.append(("base", group.base))
+    if group.status is not None:
+        pairs.append(("status", group.status))
+    return pairs
+
+
+@router.get("/maintenance", response_class=HTMLResponse)
+async def maintenance_page(request: Request) -> HTMLResponse:
+    """Maintenance page — one GitHub PR search link per configured group."""
+    tracked = tracked_repo_names()
+    groups = [
+        MaintenanceGroupViewModel(
+            name=group.name,
+            matchers=_describe_matchers(group),
+            scope=", ".join(group.repos) if group.repos else "all tracked repositories",
+            searches=build_group_searches(group, tracked),
+        )
+        for group in get_maintenance_config().groups
+    ]
+    return templates.TemplateResponse(
+        request,
+        "maintenance.html",
+        context={"groups": groups},
     )
 
 

@@ -27,6 +27,7 @@ grimoire/
 │   ├── models.py                 # Core domain models (shared)
 │   ├── database.py               # SQLModel engine + session
 │   ├── targeting.py              # Shared target resolution (list/regex/script)
+│   ├── maintenance.py            # Maintenance PR groups: GitHub search query/link builder + API
 │   ├── github/
 │   │   ├── __init__.py
 │   │   ├── client.py             # Low-level GitHub API wrapper
@@ -54,7 +55,8 @@ grimoire/
 │   │   │   ├── base.html
 │   │   │   ├── dashboard.html
 │   │   │   ├── repository.html
-│   │   │   └── actions.html
+│   │   │   ├── actions.html
+│   │   │   └── maintenance.html
 │   │   └── static/
 │   │       └── styles.css        # Tailwind output
 │   └── observability/
@@ -143,6 +145,15 @@ repositories:
     workflows:
       exclude: ["Release *"]       # applies to all repos from this team
 
+# Maintenance PR groups: Grimoire builds GitHub search links, it stores no PRs
+maintenance:
+  groups:
+    - name: "renovate"
+      authors: ["app/renovate"]
+      labels: ["dependencies"]
+      status: failure
+      repos: ["owner/*"]           # optional; default: all tracked repos
+
 # Staleness thresholds
 staleness:
   pull_requests_days: 30   # PRs with no push/comment for this many days
@@ -173,6 +184,7 @@ log_file: "./grimoire.log"
 | `GET` | `/api/actions/{slug}/runs` | List run history |
 | `GET` | `/api/actions/{slug}/runs/{id}` | Get specific run details + logs |
 | `POST` | `/api/actions/{slug}/run` | Trigger action (optional `?repo=`); 409 if running |
+| `GET` | `/api/maintenance/groups` | GitHub PR search `query` + `url` per maintenance group (config + tracked repos only; no GitHub calls) |
 | `GET` | `/health` | Health check (for Docker HEALTHCHECK / k8s probes) |
 
 Auto-generated OpenAPI docs are available at `/docs` (Swagger UI) and `/redoc`.
