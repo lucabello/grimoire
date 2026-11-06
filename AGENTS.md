@@ -56,7 +56,15 @@ When modifying or adding functionality, add or update corresponding tests in the
 
 ## Database
 
-We are in active development — there is no need for schema migrations. When changing the SQLite schema (adding/removing columns or tables), just update the SQLModel definitions and delete `grimoire.db`. It will be recreated on the next run.
+The SQLite schema is versioned with Alembic (`src/grimoire/migrations/`) and migrated at startup by `upgrade_database`, so user databases keep their toggles, run history and cache across upgrades. Never ask users to delete `grimoire.db`.
+
+When changing the schema (adding/removing columns or tables):
+
+1. Update the SQLModel definitions in `src/grimoire/database.py`.
+2. Run `just migration "short description"` to autogenerate a revision in `src/grimoire/migrations/versions/`.
+3. Review the generated revision (SQLite needs batch operations for most alterations; make sure the downgrade works) and commit it together with the model change.
+
+`tests/test_migrations/test_revisions.py` fails when the migrated schema differs from the models, so a model change without a revision does not pass `just check`. Tests create their database with `upgrade_database`.
 
 ## Style
 

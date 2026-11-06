@@ -4,8 +4,13 @@ from __future__ import annotations
 
 from collections.abc import Sequence
 from datetime import datetime, timezone
+from pathlib import Path
 from typing import Any, Optional
 
+from alembic import command
+from alembic.config import Config
+from sqlalchemy import inspect
+from sqlalchemy.engine import Connection
 from sqlalchemy.ext.asyncio import AsyncEngine, create_async_engine
 from sqlmodel import Field, SQLModel, select
 from sqlmodel.ext.asyncio.session import AsyncSession
@@ -204,10 +209,43 @@ async def get_engine(database_path: str | None = None) -> AsyncEngine:
     return create_async_engine(url, echo=False)
 
 
-async def create_tables(engine: AsyncEngine) -> None:
-    """Create all tables if they don't exist."""
+MIGRATIONS_DIR = Path(__file__).parent / "migrations"
+# First revision: the schema as created by `create_all` before migrations existed.
+BASELINE_REVISION = "89154088af06"
+# Second revision: adds the run-detail columns to `cached_workflow_status`.
+RUN_DETAILS_REVISION = "ffa5587a73e6"
+
+
+def alembic_config(connection: Connection) -> Config:
+    """Build an in-code Alembic config that runs on an existing sync connection."""
+    config = Config()
+    config.set_main_option("script_location", str(MIGRATIONS_DIR))
+    config.attributes["connection"] = connection
+    return config
+
+
+def _upgrade_to_head(connection: Connection) -> None:
+    config = alembic_config(connection)
+    inspector = inspect(connection)
+    tables = inspector.get_table_names()
+    if tables and "alembic_version" not in tables:
+        # A database created by `create_all` before migrations were adopted. Its real
+        # schema decides where it sits in the history. It is stamped with the revision
+        # whose schema it has, never "head": later revisions must still be applied.
+        columns = {c["name"] for c in inspector.get_columns("cached_workflow_status")}
+        revision = RUN_DETAILS_REVISION if "run_id" in columns else BASELINE_REVISION
+        command.stamp(config, revision)
+    command.upgrade(config, "head")
+
+
+async def upgrade_database(engine: AsyncEngine) -> None:
+    """Bring the database schema to the latest revision, creating it if needed.
+
+    Handles fresh databases, databases created before migrations existed (adopted in
+    place, keeping their data) and already versioned databases.
+    """
     async with engine.begin() as conn:
-        await conn.run_sync(SQLModel.metadata.create_all)
+        await conn.run_sync(_upgrade_to_head)
 
 
 async def get_session(engine: AsyncEngine) -> AsyncSession:

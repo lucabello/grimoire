@@ -7,7 +7,7 @@ import pytest
 import respx
 from sqlalchemy.ext.asyncio import AsyncEngine
 
-from grimoire.database import create_tables, get_engine
+from grimoire.database import get_engine, upgrade_database
 from grimoire.github.client import GitHubAPIError, GitHubClient, NotFoundError
 
 
@@ -15,7 +15,7 @@ from grimoire.github.client import GitHubAPIError, GitHubClient, NotFoundError
 async def engine(tmp_path) -> AsyncEngine:
     db_path = str(tmp_path / "test.db")
     eng = await get_engine(db_path)
-    await create_tables(eng)
+    await upgrade_database(eng)
     return eng
 
 

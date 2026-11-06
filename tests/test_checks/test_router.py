@@ -11,7 +11,7 @@ from httpx import ASGITransport, AsyncClient
 from grimoire.app import create_app
 from grimoire.checks.loader import CheckDefinition
 from grimoire.checks.router import router, set_checks_state
-from grimoire.database import create_tables, get_engine
+from grimoire.database import get_engine, upgrade_database
 from grimoire.models import TrackedRepository
 from grimoire.targeting import TargetSpec
 
@@ -60,7 +60,7 @@ def _repo() -> TrackedRepository:
 async def check_client(tmp_path: Path) -> AsyncIterator[AsyncClient]:
     """Provide an async HTTP client wired to a test app with the checks router."""
     engine = await get_engine(str(tmp_path / "test.db"))
-    await create_tables(engine)
+    await upgrade_database(engine)
 
     checks = [_check()]
     repos = [_repo()]

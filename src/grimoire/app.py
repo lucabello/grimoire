@@ -27,10 +27,10 @@ from grimoire.checks.router import set_checks_state
 from grimoire.checks.scheduler import register_checks
 from grimoire.config import load_config
 from grimoire.database import (
-    create_tables,
     get_engine,
     restore_action_toggles,
     restore_check_toggles,
+    upgrade_database,
 )
 from grimoire.github.client import GitHubClient
 from grimoire.github.router import (
@@ -99,7 +99,7 @@ async def lifespan(_app: FastAPI) -> AsyncIterator[None]:
 
     # Database
     engine = await get_engine(str(config.database_path))
-    await create_tables(engine)
+    await upgrade_database(engine)
 
     # Clean up any run records left in 'running' state from a previous crash
     from grimoire.database import cleanup_stale_runs

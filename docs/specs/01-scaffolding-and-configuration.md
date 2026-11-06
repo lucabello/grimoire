@@ -24,6 +24,7 @@ description = "Self-hostable GitHub repository monitoring dashboard"
 - `pydantic` — config validation
 - `sqlmodel` — ORM (SQLAlchemy + Pydantic)
 - `aiosqlite` — async SQLite driver
+- `alembic` — schema migrations
 - `apscheduler` (v3) — task scheduling
 - `prometheus-client` — metrics
 - `opentelemetry-api`, `opentelemetry-sdk`, `opentelemetry-instrumentation-fastapi` — structured logging
@@ -252,9 +253,21 @@ SQLModel table models for persistent state:
 
 ```python
 async def get_engine(database_path: str) -> AsyncEngine: ...
-async def create_tables(engine: AsyncEngine) -> None: ...
+async def upgrade_database(engine: AsyncEngine) -> None: ...
 async def get_session(engine: AsyncEngine) -> AsyncSession: ...
 ```
+
+### Migrations
+
+The schema is versioned with Alembic. The migrations live in the `src/grimoire/migrations/` package (so they ship in the wheel and the Docker image) and are configured in code: there is no `alembic.ini` and nothing depends on the working directory.
+
+- `env.py` runs on the synchronous connection that `upgrade_database` passes through the Alembic config (`connection.run_sync(...)`), so it works inside the running event loop. It uses `render_as_batch=True` (SQLite) and `compare_type=True`.
+- `versions/` holds the revisions. The first one creates the complete schema as `create_all` made it before migrations existed (the baseline); each later one is a schema change.
+- `upgrade_database(engine)` is called once at startup (see `app.py`) and handles three states:
+  1. **Fresh database** (no tables): runs every revision up to head.
+  2. **Unversioned database** (tables but no `alembic_version`, i.e. created before migrations): the real schema decides. If `cached_workflow_status` already has the run-detail columns it is stamped with the run-details revision (`RUN_DETAILS_REVISION`, never `head`, so later revisions are still applied); otherwise it is stamped at the baseline. It is then upgraded to head. Existing rows are kept.
+  3. **Versioned database**: upgrades to head (a no-op when current).
+- Changing a SQLModel table requires a revision in the same change: run `just migration "message"` (autogenerate against a scratch database at the current head), review the generated file and commit it. `tests/test_migrations/test_revisions.py` fails when the migrated schema differs from `SQLModel.metadata`.
 
 ## 1.5 — Example Config & justfile
 
@@ -263,6 +276,7 @@ async def get_session(engine: AsyncEngine) -> AsyncSession: ...
   - `dev` recipe: `uv run uvicorn grimoire.app:create_app --factory --reload --port 8000`
   - `run` recipe: `uv run uvicorn grimoire.app:create_app --factory --port 8000`
   - Keep existing `check`, `format`, `lint`, `test` recipes.
+  - Add a `migration "message"` recipe that autogenerates a database revision.
   - Add `docker-build` and `docker-run` recipes.
 - Create a minimal `src/grimoire/app.py` with `create_app() -> FastAPI` that returns a FastAPI instance (routes added in later modules).
 - CLI entrypoint `grimoire` (`src/grimoire/__main__.py`): `grimoire [--config-file PATH] [--port 8000] [--host 0.0.0.0] [--root-path /prefix]`. `--config-file` must exist and is exported as `GRIMOIRE_CONFIG` before starting uvicorn with the app factory. `--root-path` is normalised to `/prefix` (no trailing slash) and passed to uvicorn as the ASGI `root_path`.
@@ -272,7 +286,8 @@ async def get_session(engine: AsyncEngine) -> AsyncSession: ...
 - [ ] `uv sync` installs all dependencies without errors
 - [ ] `just lint` passes (pyright, ruff)
 - [ ] `load_config()` correctly parses the example config
-- [ ] Database tables are created on startup
+- [ ] Database tables are created on startup by `upgrade_database`, and a database created before migrations existed is upgraded in place without losing rows
+- [ ] The migrated schema matches the SQLModel models (drift test)
 - [ ] `just dev` starts the server on port 8000, returns 200 on `GET /`
 - [ ] Tests cover config parsing (valid input, missing fields, invalid values)
 - [ ] A config without `maintenance` loads with no groups; duplicate/blank group names, groups without a matcher, blank list entries and an invalid `status` fail validation with a clear message

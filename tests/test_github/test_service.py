@@ -25,8 +25,8 @@ from grimoire.database import (
     CachedRepository,
     CachedWorkflowStatus,
     CheckResultRecord,
-    create_tables,
     get_engine,
+    upgrade_database,
 )
 from grimoire.github.client import GitHubClient
 from grimoire.github.service import (
@@ -48,7 +48,7 @@ from grimoire.models import RepositoryStats, TrackedRepository, WorkflowStatus
 async def engine(tmp_path) -> AsyncEngine:
     db_path = str(tmp_path / "test.db")
     eng = await get_engine(db_path)
-    await create_tables(eng)
+    await upgrade_database(eng)
     return eng
 
 

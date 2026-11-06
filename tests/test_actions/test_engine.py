@@ -14,7 +14,7 @@ from grimoire.actions.engine import (
     run_action,
 )
 from grimoire.actions.loader import ActionDefinition
-from grimoire.database import ActionRunRecord, ActionRunRepoRecord, create_tables, get_engine
+from grimoire.database import ActionRunRecord, ActionRunRepoRecord, get_engine, upgrade_database
 from grimoire.models import TrackedRepository
 from grimoire.targeting import TargetSpec
 
@@ -73,7 +73,7 @@ def _repo(name: str = "acme/repo", branches: list[str] | None = None) -> Tracked
 class TestRunAction:
     async def test_successful_action(self, tmp_path: Path) -> None:
         engine = await get_engine(str(tmp_path / "test.db"))
-        await create_tables(engine)
+        await upgrade_database(engine)
         ws = MockWorkspace(tmp_path)
 
         result = await run_action(
@@ -93,7 +93,7 @@ class TestRunAction:
 
     async def test_failed_action(self, tmp_path: Path) -> None:
         engine = await get_engine(str(tmp_path / "test.db"))
-        await create_tables(engine)
+        await upgrade_database(engine)
         ws = MockWorkspace(tmp_path)
 
         result = await run_action(
@@ -110,7 +110,7 @@ class TestRunAction:
     async def test_sequential_execution(self, tmp_path: Path) -> None:
         """Verify repos are processed sequentially (order preserved)."""
         engine = await get_engine(str(tmp_path / "test.db"))
-        await create_tables(engine)
+        await upgrade_database(engine)
         ws = MockWorkspace(tmp_path)
 
         repos = [_repo("acme/alpha"), _repo("acme/beta")]
@@ -134,7 +134,7 @@ class TestRunAction:
     async def test_concurrent_run_guard(self, tmp_path: Path) -> None:
         """Running the same action twice concurrently should raise ActionConflictError."""
         engine = await get_engine(str(tmp_path / "test.db"))
-        await create_tables(engine)
+        await upgrade_database(engine)
 
         # Insert a "running" record manually
         run_record = ActionRunRecord(
@@ -160,7 +160,7 @@ class TestRunAction:
 
     async def test_output_capture_and_truncation(self, tmp_path: Path) -> None:
         engine = await get_engine(str(tmp_path / "test.db"))
-        await create_tables(engine)
+        await upgrade_database(engine)
         ws = MockWorkspace(tmp_path)
 
         big_script = f"python3 -c \"print('x' * {OUTPUT_SIZE_CAP + 1000})\""
@@ -177,7 +177,7 @@ class TestRunAction:
     async def test_db_persistence(self, tmp_path: Path) -> None:
         """ActionRunRecord and ActionRunRepoRecord must be created."""
         engine = await get_engine(str(tmp_path / "test.db"))
-        await create_tables(engine)
+        await upgrade_database(engine)
         ws = MockWorkspace(tmp_path)
 
         await run_action(
@@ -203,7 +203,7 @@ class TestRunAction:
     async def test_pre_execution_calls_sync_and_reset(self, tmp_path: Path) -> None:
         """sync_repo and reset_workdir must be called for each repo+branch."""
         engine = await get_engine(str(tmp_path / "test.db"))
-        await create_tables(engine)
+        await upgrade_database(engine)
         ws = MockWorkspace(tmp_path)
 
         await run_action(
@@ -219,7 +219,7 @@ class TestRunAction:
 
     async def test_specific_repo_filter(self, tmp_path: Path) -> None:
         engine = await get_engine(str(tmp_path / "test.db"))
-        await create_tables(engine)
+        await upgrade_database(engine)
         ws = MockWorkspace(tmp_path)
 
         repos = [_repo("acme/alpha"), _repo("acme/beta")]
@@ -245,7 +245,7 @@ class TestRunAction:
 
     async def test_timeout_handling(self, tmp_path: Path) -> None:
         engine = await get_engine(str(tmp_path / "test.db"))
-        await create_tables(engine)
+        await upgrade_database(engine)
         ws = MockWorkspace(tmp_path)
 
         import grimoire.actions.engine as eng
@@ -268,7 +268,7 @@ class TestRunAction:
     async def test_multiple_branches(self, tmp_path: Path) -> None:
         """Actions run against all observed branches."""
         engine = await get_engine(str(tmp_path / "test.db"))
-        await create_tables(engine)
+        await upgrade_database(engine)
         ws = MockWorkspace(tmp_path)
 
         repo = _repo("acme/repo", branches=["main", "develop"])
@@ -288,7 +288,7 @@ class TestRunAction:
     async def test_script_targeting_restricts_to_default_branch(self, tmp_path: Path) -> None:
         """Script targeting evaluated per branch scopes the action correctly."""
         engine = await get_engine(str(tmp_path / "test.db"))
-        await create_tables(engine)
+        await upgrade_database(engine)
         ws = MockWorkspace(tmp_path)
 
         action = ActionDefinition(
@@ -326,7 +326,7 @@ def _global_action(script: str = "echo global") -> ActionDefinition:
 class TestGlobalAction:
     async def test_global_action_runs_once(self, tmp_path: Path) -> None:
         engine = await get_engine(str(tmp_path / "test.db"))
-        await create_tables(engine)
+        await upgrade_database(engine)
         ws = MockWorkspace(tmp_path)
 
         result = await run_action(
@@ -346,7 +346,7 @@ class TestGlobalAction:
     async def test_global_action_no_sync_or_reset(self, tmp_path: Path) -> None:
         """Global actions must not call sync_repo or reset_workdir."""
         engine = await get_engine(str(tmp_path / "test.db"))
-        await create_tables(engine)
+        await upgrade_database(engine)
         ws = MockWorkspace(tmp_path)
 
         await run_action(
@@ -362,7 +362,7 @@ class TestGlobalAction:
 
     async def test_global_action_db_persistence(self, tmp_path: Path) -> None:
         engine = await get_engine(str(tmp_path / "test.db"))
-        await create_tables(engine)
+        await upgrade_database(engine)
         ws = MockWorkspace(tmp_path)
 
         await run_action(
@@ -386,7 +386,7 @@ class TestGlobalAction:
 
     async def test_global_action_failure(self, tmp_path: Path) -> None:
         engine = await get_engine(str(tmp_path / "test.db"))
-        await create_tables(engine)
+        await upgrade_database(engine)
         ws = MockWorkspace(tmp_path)
 
         result = await run_action(
@@ -415,7 +415,7 @@ class TestActionProgress:
         from grimoire.actions.engine import get_action_progress, is_action_running
 
         engine = await get_engine(str(tmp_path / "test.db"))
-        await create_tables(engine)
+        await upgrade_database(engine)
         ws = MockWorkspace(tmp_path)
 
         repos = [_repo("acme/alpha"), _repo("acme/beta")]
@@ -439,7 +439,7 @@ class TestActionProgress:
         from grimoire.actions.engine import get_action_progress, is_action_running
 
         engine = await get_engine(str(tmp_path / "test.db"))
-        await create_tables(engine)
+        await upgrade_database(engine)
         ws = MockWorkspace(tmp_path)
 
         result = await run_action(_action("exit 1"), [_repo()], ws, engine, triggered_by="manual")

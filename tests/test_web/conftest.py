@@ -11,7 +11,7 @@ from sqlmodel.ext.asyncio.session import AsyncSession
 
 from grimoire.app import create_app
 from grimoire.checks.loader import CheckDefinition
-from grimoire.database import CheckResultRecord, CheckRunRecord, create_tables, get_engine
+from grimoire.database import CheckResultRecord, CheckRunRecord, get_engine, upgrade_database
 from grimoire.github.router import update_cache
 from grimoire.models import (
     IssueDetail,
@@ -172,7 +172,7 @@ async def web_client_with_checks(tmp_path: object) -> AsyncIterator[AsyncClient]
 
     # Create a temp DB with check result tables
     engine = await get_engine(str(tmp_path) + "/test.db")  # type: ignore[arg-type]
-    await create_tables(engine)
+    await upgrade_database(engine)
 
     # Set up check definitions
     watchdog = CheckDefinition(
@@ -269,7 +269,7 @@ async def web_client_with_actions(tmp_path: object) -> AsyncIterator[AsyncClient
 
     # Create a temp DB with action run tables
     engine = await get_engine(str(tmp_path) + "/test_actions.db")  # type: ignore[arg-type]
-    await create_tables(engine)
+    await upgrade_database(engine)
 
     # Set up action definitions
     test_action = ActionDefinition(

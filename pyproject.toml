@@ -24,6 +24,7 @@ dependencies = [
     "opentelemetry-sdk>=1.30",
     "opentelemetry-instrumentation-fastapi>=0.51b0",
     "python-multipart>=0.0.18",
+    "alembic>=1.16",
 ]
 
 [project.scripts]

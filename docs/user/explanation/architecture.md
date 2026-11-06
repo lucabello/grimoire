@@ -74,7 +74,7 @@ Grimoire uses SQLite via aiosqlite + SQLModel. The database stores:
 - Check and action results with full output logs
 - Toggle states (enabled/disabled per check/action)
 
-There are no migrations — the schema is recreated on startup if the database file doesn't exist. During development, delete `grimoire.db` after schema changes.
+The schema is migrated automatically at startup: a new database is created, and an existing one — including one from a release that predates migrations — is upgraded in place. Upgrading Grimoire never requires deleting `grimoire.db`; toggles, run history and the GitHub cache are kept.
 
 ## Security model
 

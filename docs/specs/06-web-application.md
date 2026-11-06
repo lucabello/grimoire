@@ -25,7 +25,7 @@ async def lifespan(app: FastAPI):
     # Startup
     config = load_config()
     engine = await get_engine(config.database_path)
-    await create_tables(engine)
+    await upgrade_database(engine)  # Alembic: create or migrate the schema
     # Load cached data from DB (instant, no API calls)
     # Initialize GitHub client, workspace manager, scheduler
     # Start background refresh task
