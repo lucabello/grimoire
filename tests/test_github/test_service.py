@@ -37,7 +37,13 @@ from grimoire.github.service import (
     resolve_repositories,
     save_stats_to_db,
 )
-from grimoire.models import RepositoryStats, TrackedRepository, WorkflowStatus
+from grimoire.models import (
+    IssueDetail,
+    PullRequestDetail,
+    RepositoryStats,
+    TrackedRepository,
+    WorkflowStatus,
+)
 
 # ---------------------------------------------------------------------------
 # Fixtures
@@ -347,6 +353,57 @@ async def test_save_and_load_stats(engine: AsyncEngine) -> None:
     assert loaded_stats[0].workflows[0].name == "CI"
     assert loaded_stats[0].total_branches == 5
     assert loaded_stats[0].last_commit_at is not None
+
+
+async def test_loaded_cache_timestamps_are_timezone_aware(engine: AsyncEngine) -> None:
+    """SQLite drops tzinfo; every loaded datetime must come back as aware UTC."""
+    repos = [TrackedRepository(full_name="owner/repo1", default_branch="main", branches=["main"])]
+    moment = datetime(2026, 3, 1, 10, 0, tzinfo=UTC)
+    stats = RepositoryStats(
+        full_name="owner/repo1",
+        default_branch="main",
+        workflows=[
+            WorkflowStatus(
+                name="CI",
+                branch="main",
+                status="success",
+                url="",
+                created_at=moment,
+                run_started_at=moment,
+                updated_at=moment,
+            )
+        ],
+        stale_issue_items=[
+            IssueDetail(number=1, title="i", url="", created_at=moment, last_activity_at=moment)
+        ],
+        stale_pr_items=[
+            PullRequestDetail(
+                number=2, title="p", url="", created_at=moment, last_activity_at=moment
+            )
+        ],
+        fetched_at=moment,
+        last_commit_at=moment,
+    )
+    await save_stats_to_db(engine, [stats], repos)
+
+    _, (loaded,) = await load_stats_from_db(engine)
+
+    (workflow,) = loaded.workflows
+    (issue,) = loaded.stale_issue_items
+    (pr,) = loaded.stale_pr_items
+    timestamps = [
+        loaded.fetched_at,
+        loaded.last_commit_at,
+        workflow.created_at,
+        workflow.run_started_at,
+        workflow.updated_at,
+        issue.created_at,
+        issue.last_activity_at,
+        pr.created_at,
+        pr.last_activity_at,
+    ]
+    assert all(t is not None and t.utcoffset() == timedelta(0) for t in timestamps)
+    assert loaded.fetched_at == moment
 
 
 async def test_workflow_run_details_survive_cache_round_trip(engine: AsyncEngine) -> None:

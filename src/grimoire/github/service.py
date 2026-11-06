@@ -9,7 +9,7 @@ from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
 from fnmatch import fnmatch
 from pathlib import Path
-from typing import Any
+from typing import Any, overload
 
 from sqlalchemy.ext.asyncio import AsyncEngine
 from sqlmodel import delete, select
@@ -467,6 +467,10 @@ def _parse_dt(value: str | None) -> datetime | None:
         return None
 
 
+@overload
+def _as_utc(value: datetime) -> datetime: ...
+@overload
+def _as_utc(value: None) -> None: ...
 def _as_utc(value: datetime | None) -> datetime | None:
     """SQLite drops tzinfo; restore UTC so cached values serialise like fresh ones."""
     if value is not None and value.tzinfo is None:
@@ -749,8 +753,8 @@ async def load_stats_from_db(
                     number=i.number,
                     title=i.title,
                     url=i.url,
-                    created_at=i.created_at,
-                    last_activity_at=i.last_comment_at,
+                    created_at=_as_utc(i.created_at),
+                    last_activity_at=_as_utc(i.last_comment_at),
                     author=i.author,
                 )
                 for i in issue_rows
@@ -769,8 +773,8 @@ async def load_stats_from_db(
                     number=p.number,
                     title=p.title,
                     url=p.url,
-                    created_at=p.created_at,
-                    last_activity_at=p.last_comment_at,
+                    created_at=_as_utc(p.created_at),
+                    last_activity_at=_as_utc(p.last_comment_at),
                     author=p.author,
                 )
                 for p in pr_rows
@@ -787,8 +791,8 @@ async def load_stats_from_db(
                     workflows=workflows,
                     stale_issue_items=stale_issue_items,
                     stale_pr_items=stale_pr_items,
-                    fetched_at=cr.fetched_at,
-                    last_commit_at=cr.last_commit_at,
+                    fetched_at=_as_utc(cr.fetched_at),
+                    last_commit_at=_as_utc(cr.last_commit_at),
                     total_branches=cr.total_branches,
                 )
             )
