@@ -30,7 +30,7 @@ def test_defaults() -> None:
 
 def test_config_file_and_port(tmp_path: Path) -> None:
     config = tmp_path / "config.mlops.yaml"
-    config.write_text("repositories: []\n")
+    config.write_text("teams: []\n")
     with patch("uvicorn.run") as run:
         main(["--config-file", str(config), "--port", "8081"])
     assert run.call_args.kwargs["port"] == 8081

@@ -11,6 +11,7 @@ from sqlmodel.ext.asyncio.session import AsyncSession
 
 from grimoire.app import create_app
 from grimoire.checks.loader import CheckDefinition
+from grimoire.config import TeamConfig
 from grimoire.database import CheckResultRecord, CheckRunRecord, create_tables, get_engine
 from grimoire.github.router import update_cache
 from grimoire.models import (
@@ -21,22 +22,29 @@ from grimoire.models import (
     WorkflowStatus,
 )
 from grimoire.targeting import TargetSpec
+from grimoire.web.router import set_teams
 
 
 def _populate_cache() -> None:
-    """Populate the in-memory GitHub cache with test data."""
+    """Populate the in-memory GitHub cache and configured teams with test data."""
+    set_teams(
+        [
+            TeamConfig(id="backend", github="org/backend"),
+            TeamConfig(id="frontend-team", github="org/frontend-team"),
+        ]
+    )
     repos = [
         TrackedRepository(
             full_name="acme/api",
             default_branch="main",
             branches=["main"],
-            sources=["team:acme/backend"],
+            sources=["team:backend"],
         ),
         TrackedRepository(
             full_name="acme/frontend",
             default_branch="main",
             branches=["main", "develop"],
-            sources=["team:acme/frontend-team", "team:acme/backend"],
+            sources=["team:frontend-team", "team:backend"],
         ),
     ]
     stats = [

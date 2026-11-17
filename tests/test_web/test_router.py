@@ -31,7 +31,7 @@ class TestDashboard:
         resp = await web_client.get("/")
         assert resp.status_code == 200
         assert 'id="team-filter"' in resp.text
-        # Labels / values are slug-only (no org prefix)
+        # Values are team ids; labels default to the id
         assert 'value="backend"' in resp.text
         assert 'value="frontend-team"' in resp.text
         assert ">backend<" in resp.text

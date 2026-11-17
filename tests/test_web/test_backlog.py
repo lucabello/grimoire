@@ -270,7 +270,7 @@ def _make_repo(name: str = "acme/api", branches: list[str] | None = None) -> Tra
         full_name=name,
         default_branch="main",
         branches=branches or ["main"],
-        sources=["static"],
+        sources=["team:backend"],
     )
 
 

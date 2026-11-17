@@ -15,7 +15,7 @@ from sqlalchemy.ext.asyncio import AsyncEngine
 from sqlmodel import delete, select
 from sqlmodel.ext.asyncio.session import AsyncSession
 
-from grimoire.config import GrimoireConfig, StalenessConfig, StaticRepoSource, TeamRepoSource
+from grimoire.config import GrimoireConfig, StalenessConfig, StaticRepoSource, TeamConfig
 from grimoire.database import (
     CachedIssue,
     CachedPullRequest,
@@ -107,20 +107,25 @@ async def resolve_repositories(
     """Build the list of tracked repos from config, validating via the API."""
     seen: dict[str, TrackedRepository] = {}
 
-    for source in config.repositories:
-        if isinstance(source, StaticRepoSource):
-            await _resolve_static(source, client, seen)
-        elif isinstance(source, TeamRepoSource):
-            await _resolve_team(source, client, seen)
+    for team in config.teams:
+        if team.github is not None:
+            await _resolve_github_team(team, client, seen)
+        excluded = set(team.exclude)
+        for repo in team.repositories:
+            if repo.repo in excluded:
+                continue
+            await _resolve_static(repo, team.id, client, seen)
 
     return list(seen.values())
 
 
 async def _resolve_static(
     source: StaticRepoSource,
+    team_id: str,
     client: GitHubClient,
     seen: dict[str, TrackedRepository],
 ) -> None:
+    source_label = f"team:{team_id}"
     try:
         data = await client.get_repo(source.repo)
         if data is None:
@@ -140,7 +145,7 @@ async def _resolve_static(
         if source.repo in seen:
             existing = seen[source.repo]
             merged = list(dict.fromkeys(existing.branches + branches))
-            merged_sources = list(dict.fromkeys([*existing.sources, "static"]))
+            merged_sources = list(dict.fromkeys([*existing.sources, source_label]))
             seen[source.repo] = existing.model_copy(
                 update={"branches": merged, "sources": merged_sources}
             )
@@ -149,33 +154,36 @@ async def _resolve_static(
                 full_name=source.repo,
                 default_branch=default_branch,
                 branches=branches,
-                sources=["static"],
+                sources=[source_label],
                 workflow_include=source.workflows.include,
                 workflow_exclude=source.workflows.exclude,
             )
     except Exception:
-        logger.warning("Failed to resolve static repo %s, skipping", source.repo, exc_info=True)
+        logger.warning(
+            "Failed to resolve repo %s in team %s, skipping", source.repo, team_id, exc_info=True
+        )
 
 
-async def _resolve_team(
-    source: TeamRepoSource,
+async def _resolve_github_team(
+    team: TeamConfig,
     client: GitHubClient,
     seen: dict[str, TrackedRepository],
 ) -> None:
-    # team format: "org/team-slug"
-    try:
-        org, team_slug = source.team.split("/", 1)
-    except ValueError:
-        logger.warning("Invalid team format %r, expected 'org/team-slug'", source.team)
+    """Add every non-archived repo visible to the team's GitHub team, minus ``exclude``."""
+    if team.github is None:
         return
+    org, team_slug = team.github.split("/", 1)
+    source_label = f"team:{team.id}"
 
     try:
         repos = await client.get_team_repos(org, team_slug)
     except Exception:
-        logger.warning("Failed to fetch repos for team %s, skipping", source.team, exc_info=True)
+        logger.warning(
+            "Failed to fetch repos for GitHub team %s, skipping", team.github, exc_info=True
+        )
         return
 
-    exclude_set = set(source.exclude)
+    exclude_set = set(team.exclude)
 
     for repo_data in repos:
         full_name = repo_data.get("full_name", "")
@@ -186,7 +194,6 @@ async def _resolve_team(
 
         default_branch = repo_data.get("default_branch", "main")
         branches = [default_branch]
-        source_label = f"team:{source.team}"
 
         if full_name in seen:
             existing = seen[full_name]
@@ -201,8 +208,8 @@ async def _resolve_team(
                 default_branch=default_branch,
                 branches=branches,
                 sources=[source_label],
-                workflow_include=source.workflows.include,
-                workflow_exclude=source.workflows.exclude,
+                workflow_include=team.workflows.include,
+                workflow_exclude=team.workflows.exclude,
             )
 
 
@@ -503,9 +510,8 @@ async def refresh_all_stats(
 
     # Compute a preliminary repo count from config so the progress bar can
     # show a meaningful denominator before any async work completes.
-    # Static repos are known exactly; team repos need API resolution, so we
-    # fall back to the cached count if available.
-    preliminary_total = sum(1 for src in config.repositories if isinstance(src, StaticRepoSource))
+    # Explicit team repos are known exactly; GitHub team repos need API resolution.
+    preliminary_total = sum(len(team.repositories) for team in config.teams)
 
     # Mark refresh as running immediately (before async work begins) so that
     # polling endpoints see it as in-progress right away.
@@ -680,7 +686,7 @@ async def load_stats_from_db(
 
         for cr in cached_repos:
             branches = json.loads(cr.branches_json) if cr.branches_json else []
-            sources = json.loads(cr.sources_json) if cr.sources_json else ["static"]
+            sources = json.loads(cr.sources_json) if cr.sources_json else []
             repo = TrackedRepository(
                 full_name=cr.full_name,
                 default_branch=cr.default_branch,
@@ -775,19 +781,15 @@ async def load_stats_from_db(
 async def prune_removed_repos(engine: AsyncEngine, config: GrimoireConfig) -> int:
     """Delete DB-cached data for repos no longer present in the config.
 
-    Only performs pruning when the config contains exclusively static repo
-    sources (``repo:`` entries) so the full set of expected names is known
-    without making API calls.  Returns the number of repos pruned.
+    Only performs pruning when no team uses a GitHub team listing, so the full
+    set of expected names is known without making API calls.  Returns the number
+    of repos pruned.
     """
-    has_team_sources = any(isinstance(s, TeamRepoSource) for s in config.repositories)
-    if has_team_sources:
-        logger.debug("Config contains team sources — skipping DB prune")
+    if any(team.github is not None for team in config.teams):
+        logger.debug("Config contains GitHub team listings — skipping DB prune")
         return 0
 
-    configured_names: set[str] = set()
-    for source in config.repositories:
-        if isinstance(source, StaticRepoSource):
-            configured_names.add(source.repo)
+    configured_names = {repo.repo for team in config.teams for repo in team.repositories}
 
     if not configured_names:
         return 0

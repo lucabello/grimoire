@@ -10,7 +10,6 @@ import pytest
 from grimoire.config import (
     GrimoireConfig,
     StaticRepoSource,
-    TeamRepoSource,
     _get_xdg_config_path,
     _get_xdg_data_dir,
     load_config,
@@ -57,42 +56,63 @@ class TestLoadConfig:
         config = load_config(tmp_config)
         assert isinstance(config, GrimoireConfig)
         assert config.github.token == "ghp_test_token_123"
-        assert len(config.repositories) == 2
+        assert len(config.teams[0].repositories) == 2
         assert config.staleness.pull_requests_days == 14
         assert config.staleness.issues_days == 180
         assert config.refresh_schedule == "*/10 * * * *"
 
     def test_static_repo_with_branches(self, tmp_config: Path) -> None:
         config = load_config(tmp_config)
-        repo = config.repositories[0]
+        repo = config.teams[0].repositories[0]
         assert isinstance(repo, StaticRepoSource)
         assert repo.repo == "owner/repo1"
         assert repo.branches == ["main", "develop"]
 
     def test_static_repo_default_branches(self, tmp_config: Path) -> None:
         config = load_config(tmp_config)
-        repo = config.repositories[1]
+        repo = config.teams[0].repositories[1]
         assert isinstance(repo, StaticRepoSource)
         assert repo.repo == "owner/repo2"
         assert repo.branches == []
 
-    def test_team_repo_source(self, tmp_path: Path) -> None:
+    def test_team_github_source(self, tmp_path: Path) -> None:
         config_file = tmp_path / "config.yaml"
         config_file.write_text(
             textwrap.dedent("""\
             github:
               token: "ghp_test"
-            repositories:
-              - team: "org/my-team"
+            teams:
+              - id: "my-team"
+                github: "org/my-team"
                 exclude:
                   - "org/excluded"
             """)
         )
         config = load_config(config_file)
-        repo_source = config.repositories[0]
-        assert isinstance(repo_source, TeamRepoSource)
-        assert repo_source.team == "org/my-team"
-        assert repo_source.exclude == ["org/excluded"]
+        team = config.teams[0]
+        assert team.id == "my-team"
+        assert team.github == "org/my-team"
+        assert team.exclude == ["org/excluded"]
+        assert team.repositories == []
+
+    def test_team_label_defaults_to_id(self, tmp_path: Path) -> None:
+        config_file = tmp_path / "config.yaml"
+        config_file.write_text(
+            textwrap.dedent("""\
+            github:
+              token: "test"
+            teams:
+              - id: "mlops"
+                label: "MLOps"
+                github: "org/mlops"
+              - id: "plain"
+                github: "org/plain"
+            """)
+        )
+        config = load_config(config_file)
+        assert config.teams[0].display_name == "MLOps"
+        assert config.teams[1].label is None
+        assert config.teams[1].display_name == "plain"
 
     def test_env_var_in_token(self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
         monkeypatch.setenv("TEST_GH_TOKEN", "ghp_from_env")
@@ -101,8 +121,10 @@ class TestLoadConfig:
             textwrap.dedent("""\
             github:
               token: "${TEST_GH_TOKEN}"
-            repositories:
-              - repo: "owner/repo"
+            teams:
+              - id: "owner"
+                repositories:
+                  - repo: "owner/repo"
             """)
         )
         config = load_config(config_file)
@@ -112,13 +134,13 @@ class TestLoadConfig:
         with pytest.raises(FileNotFoundError):
             load_config(tmp_path / "nonexistent.yaml")
 
-    def test_empty_repositories_raises(self, tmp_path: Path) -> None:
+    def test_empty_teams_raises(self, tmp_path: Path) -> None:
         config_file = tmp_path / "config.yaml"
         config_file.write_text(
             textwrap.dedent("""\
             github:
               token: "test"
-            repositories: []
+            teams: []
             """)
         )
         with pytest.raises(Exception, match="[Aa]t least one"):
@@ -129,8 +151,10 @@ class TestLoadConfig:
         config_file.write_text(
             textwrap.dedent("""\
             github: {}
-            repositories:
-              - repo: "owner/repo"
+            teams:
+              - id: "owner"
+                repositories:
+                  - repo: "owner/repo"
             """)
         )
         with pytest.raises(Exception):
@@ -142,11 +166,70 @@ class TestLoadConfig:
             textwrap.dedent("""\
             github:
               token: "test"
-            repositories:
-              - invalid_key: "something"
+            teams:
+              - id: "owner"
+                repositories:
+                  - invalid_key: "something"
             """)
         )
-        with pytest.raises(ValueError, match="repo.*team"):
+        with pytest.raises(ValueError, match="repo"):
+            load_config(config_file)
+
+    def test_duplicate_team_ids_raise(self, tmp_path: Path) -> None:
+        config_file = tmp_path / "config.yaml"
+        config_file.write_text(
+            textwrap.dedent("""\
+            github:
+              token: "test"
+            teams:
+              - id: "same"
+                github: "org/a"
+              - id: "same"
+                github: "org/b"
+            """)
+        )
+        with pytest.raises(Exception, match="[Dd]uplicate"):
+            load_config(config_file)
+
+    def test_team_without_source_raises(self, tmp_path: Path) -> None:
+        config_file = tmp_path / "config.yaml"
+        config_file.write_text(
+            textwrap.dedent("""\
+            github:
+              token: "test"
+            teams:
+              - id: "empty"
+            """)
+        )
+        with pytest.raises(Exception, match="needs 'github'"):
+            load_config(config_file)
+
+    def test_invalid_github_team_format_raises(self, tmp_path: Path) -> None:
+        config_file = tmp_path / "config.yaml"
+        config_file.write_text(
+            textwrap.dedent("""\
+            github:
+              token: "test"
+            teams:
+              - id: "bad"
+                github: "no-slash-here"
+            """)
+        )
+        with pytest.raises(Exception, match="org/team-slug"):
+            load_config(config_file)
+
+    def test_invalid_team_id_raises(self, tmp_path: Path) -> None:
+        config_file = tmp_path / "config.yaml"
+        config_file.write_text(
+            textwrap.dedent("""\
+            github:
+              token: "test"
+            teams:
+              - id: "bad id!"
+                github: "org/team"
+            """)
+        )
+        with pytest.raises(Exception, match="may only contain"):
             load_config(config_file)
 
     def test_git_config_optional(self, tmp_config: Path) -> None:
@@ -167,8 +250,10 @@ class TestLoadConfig:
                 key_path: "/keys/id_ed25519"
                 format: "ssh"
               ssh_known_hosts: "/keys/known_hosts"
-            repositories:
-              - repo: "owner/repo"
+            teams:
+              - id: "owner"
+                repositories:
+                  - repo: "owner/repo"
             """)
         )
         config = load_config(config_file)
@@ -183,8 +268,10 @@ class TestLoadConfig:
             textwrap.dedent("""\
             github:
               token: "test"
-            repositories:
-              - repo: "owner/repo"
+            teams:
+              - id: "owner"
+                repositories:
+                  - repo: "owner/repo"
             """)
         )
         # Set HOME to tmp_path for predictable XDG paths
@@ -207,8 +294,10 @@ class TestLoadConfig:
             textwrap.dedent("""\
             github:
               token: "test"
-            repositories:
-              - repo: "owner/repo"
+            teams:
+              - id: "owner"
+                repositories:
+                  - repo: "owner/repo"
             staleness:
               pull_requests_days: 14
               issues_days: 180
@@ -237,36 +326,38 @@ class TestLoadConfig:
             textwrap.dedent("""\
             github:
               token: "test"
-            repositories:
-              - repo: "owner/repo"
-                workflows:
-                  include: ["CI", "Tests *"]
-                  exclude: ["Publish *"]
+            teams:
+              - id: "owner"
+                repositories:
+                  - repo: "owner/repo"
+                    workflows:
+                      include: ["CI", "Tests *"]
+                      exclude: ["Publish *"]
             """)
         )
         config = load_config(config_file)
-        repo = config.repositories[0]
+        repo = config.teams[0].repositories[0]
         assert isinstance(repo, StaticRepoSource)
         assert repo.workflows.include == ["CI", "Tests *"]
         assert repo.workflows.exclude == ["Publish *"]
 
-    def test_team_repo_with_workflow_filter(self, tmp_path: Path) -> None:
+    def test_github_team_with_workflow_filter(self, tmp_path: Path) -> None:
         config_file = tmp_path / "config.yaml"
         config_file.write_text(
             textwrap.dedent("""\
             github:
               token: "test"
-            repositories:
-              - team: "org/my-team"
+            teams:
+              - id: "my-team"
+                github: "org/my-team"
                 workflows:
                   exclude: ["Nightly *"]
             """)
         )
         config = load_config(config_file)
-        repo = config.repositories[0]
-        assert isinstance(repo, TeamRepoSource)
-        assert repo.workflows.include == []
-        assert repo.workflows.exclude == ["Nightly *"]
+        team = config.teams[0]
+        assert team.workflows.include == []
+        assert team.workflows.exclude == ["Nightly *"]
 
     def test_workflow_filter_defaults_empty(self, tmp_path: Path) -> None:
         config_file = tmp_path / "config.yaml"
@@ -274,12 +365,14 @@ class TestLoadConfig:
             textwrap.dedent("""\
             github:
               token: "test"
-            repositories:
-              - repo: "owner/repo"
+            teams:
+              - id: "owner"
+                repositories:
+                  - repo: "owner/repo"
             """)
         )
         config = load_config(config_file)
-        repo = config.repositories[0]
+        repo = config.teams[0].repositories[0]
         assert isinstance(repo, StaticRepoSource)
         assert repo.workflows.include == []
         assert repo.workflows.exclude == []
@@ -333,8 +426,10 @@ class TestConfigPathResolution:
             textwrap.dedent("""\
             github:
               token: "xdg_token"
-            repositories:
-              - repo: "owner/repo"
+            teams:
+              - id: "owner"
+                repositories:
+                  - repo: "owner/repo"
             """)
         )
 
@@ -360,8 +455,10 @@ class TestConfigPathResolution:
             textwrap.dedent("""\
             github:
               token: "xdg_token"
-            repositories:
-              - repo: "owner/xdg-repo"
+            teams:
+              - id: "owner"
+                repositories:
+                  - repo: "owner/xdg-repo"
             """)
         )
 
@@ -373,8 +470,10 @@ class TestConfigPathResolution:
             textwrap.dedent("""\
             github:
               token: "local_token"
-            repositories:
-              - repo: "owner/local-repo"
+            teams:
+              - id: "owner"
+                repositories:
+                  - repo: "owner/local-repo"
             """)
         )
 
@@ -395,8 +494,10 @@ class TestConfigPathResolution:
             textwrap.dedent("""\
             github:
               token: "env_token"
-            repositories:
-              - repo: "owner/env-repo"
+            teams:
+              - id: "owner"
+                repositories:
+                  - repo: "owner/env-repo"
             """)
         )
 
@@ -408,8 +509,10 @@ class TestConfigPathResolution:
             textwrap.dedent("""\
             github:
               token: "local_token"
-            repositories:
-              - repo: "owner/local-repo"
+            teams:
+              - id: "owner"
+                repositories:
+                  - repo: "owner/local-repo"
             """)
         )
 
@@ -459,8 +562,10 @@ class TestConfigPathResolution:
             textwrap.dedent("""\
             github:
               token: "test"
-            repositories:
-              - repo: "owner/repo"
+            teams:
+              - id: "owner"
+                repositories:
+                  - repo: "owner/repo"
             """)
         )
 

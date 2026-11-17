@@ -63,13 +63,40 @@ git:
 
 ---
 
-## `repositories` {: #repositories }
+## `teams` {: #teams }
 
-**Required.** A list of repository sources to monitor. Each entry is one of:
+**Required.** A non-empty list of teams. Every monitored repository belongs to a team, and each team id must be unique.
 
-### Static repo
+| Key | Type | Required | Default | Description |
+|-----|------|----------|---------|-------------|
+| `id` | string | Yes | — | Unique identifier. Used in the dashboard filter (`?team=<id>`). |
+| `label` | string | No | same as `id` | Display name shown in the dashboard dropdown. |
+| `github` | string | No | — | GitHub team in `org/team-slug` form. Tracks all of its non-archived repositories. |
+| `exclude` | list of strings | No | `[]` | Repos to skip (full names). Applies to both the `github` team listing and explicit `repositories`. |
+| `workflows.include` | list of strings | No | — | Glob patterns — only track matching workflows. |
+| `workflows.exclude` | list of strings | No | — | Glob patterns — exclude matching workflows (applied after include). |
+| `repositories` | list | No | `[]` | Explicit extra repositories for this team (see below). |
 
-Track a single repository by full name.
+Each team must have at least one source: `github`, or at least one entry in `repositories`.
+
+```yaml
+teams:
+  - id: "mlops"
+    label: "MLOps"
+    github: "my-org/mlops"
+    exclude:
+      - "my-org/archive-experiments"
+    workflows:
+      exclude: ["Release *"]
+  - id: "processing"
+    repositories:
+      - repo: "my-org/processing-core"
+        branches: ["main", "develop"]
+```
+
+### Explicit repositories
+
+Each entry under `repositories` tracks a single repository by full name.
 
 | Key | Type | Required | Description |
 |-----|------|----------|-------------|
@@ -78,38 +105,9 @@ Track a single repository by full name.
 | `workflows.include` | list of strings | No | Glob patterns — only track matching workflows |
 | `workflows.exclude` | list of strings | No | Glob patterns — exclude matching workflows (applied after include) |
 
-```yaml
-repositories:
-  - repo: "owner/repo-name"
-    branches: ["main", "develop"]
-    workflows:
-      include: ["CI", "Tests *"]
-      exclude: ["Publish *"]
-```
+If the same repository appears under more than one team, it is merged: all team ids are kept for dashboard filtering.
 
-### Team source
-
-Track all repositories belonging to a GitHub team. Archived repos are always excluded.
-
-| Key | Type | Required | Description |
-|-----|------|----------|-------------|
-| `team` | string | Yes | Team slug (`org/team-name`) |
-| `exclude` | list of strings | No | Repos to exclude (full names) |
-| `workflows.include` | list of strings | No | Glob patterns — only track matching workflows |
-| `workflows.exclude` | list of strings | No | Glob patterns — exclude matching workflows |
-
-```yaml
-repositories:
-  - team: "org-name/team-slug"
-    exclude:
-      - "org-name/excluded-repo"
-    workflows:
-      exclude: ["Release *"]
-```
-
-You can list multiple `- team:` / `- repo:` entries. The same repository appearing under more than one team is merged (all team labels are kept for dashboard filtering).
-
-**Dashboard sub-team filter:** When team sources are configured, the dashboard and backlog show a Team dropdown listing each team's short name (e.g. `workflows`, `MLOps`, `processing` — the slug without the org prefix). The filter uses `?team=workflows`. Choose **All** to show every tracked repo / backlog item. Teams from config always appear in the dropdown, even if that team currently has no cached repositories. On the dashboard, repository rows display the short repo name (without `owner/`) for readability.
+**Dashboard team filter:** The dashboard and backlog show a Team dropdown listing every configured team by its `label` (or `id` when no label is set). The filter uses `?team=<id>`. Choose **All** to show every tracked repo / backlog item. Teams from config always appear in the dropdown, even if that team currently has no cached repositories. On the dashboard, repository rows display the short repo name (without `owner/`) for readability.
 
 ---
 
@@ -254,11 +252,14 @@ git:
     format: "ssh"
   ssh_known_hosts: "/keys/known_hosts"
 
-repositories:
-  - repo: "owner/repo-name"
-    branches: ["main", "develop"]
-  - repo: "owner/another-repo"
-  - team: "org-name/team-slug"
+teams:
+  - id: "owner"
+    repositories:
+      - repo: "owner/repo-name"
+        branches: ["main", "develop"]
+      - repo: "owner/another-repo"
+  - id: "mlops"
+    github: "org-name/team-slug"
     exclude:
       - "org-name/excluded-repo"
     workflows:

@@ -17,8 +17,8 @@ class TrackedRepository(BaseModel):
     full_name: str  # "owner/repo"
     default_branch: str = "main"
     branches: list[str] = []  # branches to observe; empty → default branch only
-    sources: list[str] = Field(default_factory=lambda: ["static"])
-    # Each entry is "static" or "team:org/team-name". A repo can belong to
+    sources: list[str] = Field(default_factory=list)
+    # Each entry is "team:<id>" from the config. A repo can belong to several teams.
     # multiple team sources when listed under more than one config entry.
     workflow_include: list[str] = []  # glob patterns; empty → include all
     workflow_exclude: list[str] = []  # glob patterns; empty → exclude none
@@ -26,7 +26,7 @@ class TrackedRepository(BaseModel):
     @property
     def source(self) -> str:
         """Primary source label (first entry) for backward-compatible display."""
-        return self.sources[0] if self.sources else "static"
+        return self.sources[0] if self.sources else ""
 
 
 class WorkflowStatus(BaseModel):

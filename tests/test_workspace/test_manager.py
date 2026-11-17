@@ -12,6 +12,7 @@ from grimoire.config import (
     GitUserConfig,
     GrimoireConfig,
     StaticRepoSource,
+    TeamConfig,
 )
 from grimoire.models import TrackedRepository
 from grimoire.workspace.manager import WorkspaceManager
@@ -29,7 +30,9 @@ def _minimal_config(
     return GrimoireConfig(
         github=GitHubConfig(token="ghp_test_token"),
         git=git,
-        repositories=[StaticRepoSource(repo="owner/repo")],
+        teams=[
+            TeamConfig(id="owner", repositories=[StaticRepoSource(repo="owner/repo")]),
+        ],
         workspace_dir=workspace_dir,
     )
 

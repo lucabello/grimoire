@@ -16,7 +16,7 @@ from sqlalchemy import text
 from sqlmodel import select
 from sqlmodel.ext.asyncio.session import AsyncSession
 
-from grimoire.config import StalenessConfig
+from grimoire.config import StalenessConfig, TeamConfig
 from grimoire.database import ActionRunRecord
 from grimoire.models import TrackedRepository, WorkflowStatus
 from grimoire.targeting import TargetSpec
@@ -76,14 +76,14 @@ def set_refresh_schedule(schedule: str) -> None:
     _refresh_schedule = schedule
 
 
-# Configured GitHub team sources (``org/slug``) — set from app lifespan
-_configured_teams: list[str] = []
+# Configured teams — set from app lifespan
+_teams: list[TeamConfig] = []
 
 
-def set_configured_teams(teams: list[str]) -> None:
-    """Register configured ``team:`` sources (``org/slug``) for the dashboard filter."""
-    global _configured_teams  # noqa: PLW0603
-    _configured_teams = list(teams)
+def set_teams(teams: list[TeamConfig]) -> None:
+    """Register the configured teams for the dashboard and backlog filters."""
+    global _teams  # noqa: PLW0603
+    _teams = list(teams)
 
 
 # ---------------------------------------------------------------------------
@@ -116,7 +116,7 @@ class RepoViewModel:
 
     @property
     def source(self) -> str:
-        return self.sources[0] if self.sources else "static"
+        return self.sources[0] if self.sources else ""
 
     @property
     def has_problems(self) -> bool:
@@ -498,7 +498,7 @@ async def _build_repo_viewmodels(
 
 
 def _normalize_team_filter(team: str | None) -> str | None:
-    """Return a team filter token (``org/slug`` or ``slug``), or ``None`` for no filter."""
+    """Return a team id for filtering, or ``None`` for no filter."""
     if team is None:
         return None
     value = team.strip()
@@ -509,80 +509,29 @@ def _normalize_team_filter(team: str | None) -> str | None:
     return value or None
 
 
-def _team_slug(org_slug: str) -> str:
-    """Return the team slug from ``org/slug`` (or the string itself if no slash)."""
-    return org_slug.rsplit("/", 1)[-1]
-
-
-def _team_display_name(org_slug: str) -> str:
-    """Short label for the team dropdown (slug only, with light pretty-casing)."""
-    slug = _team_slug(org_slug)
-    special = {"mlops": "MLOps"}
-    return special.get(slug.lower(), slug)
-
-
 def _sources_match_team(sources: list[str], team: str | None) -> bool:
-    """Return True if *sources* match the team filter (or filter is unset)."""
+    """Return True if *sources* contain the team filter (or the filter is unset)."""
     normalized = _normalize_team_filter(team)
     if normalized is None:
         return True
-    if "/" in normalized:
-        label = f"team:{normalized}"
-        return label in sources
-    needle = normalized.lower()
-    return any(s.startswith("team:") and _team_slug(s[5:]).lower() == needle for s in sources)
+    return f"team:{normalized}" in sources
 
 
 @dataclass(frozen=True)
 class TeamFilterOption:
     """One entry in the dashboard / backlog team filter dropdown."""
 
-    value: str  # slug used in ``?team=`` (unique among configured teams)
-    label: str  # display name
-    org_slug: str  # full ``org/slug`` for matching ``team:…`` sources
+    value: str  # team id used in ``?team=``
+    label: str  # display name from config
 
 
-def _available_teams(repos: list[RepoViewModel] | None = None) -> list[TeamFilterOption]:
-    """Team filter options from config and tracked repo sources.
-
-    Always includes configured ``team:`` entries (even if that team currently
-    has zero cached repos) so the dropdown stays complete. Also merges teams
-    from the in-memory tracked-repo cache (used by the backlog page).
-    """
-    org_slugs: set[str] = set(_configured_teams)
-    for repo in repos or []:
-        for src in repo.sources:
-            if src.startswith("team:"):
-                org_slugs.add(src[5:])
-
-    from grimoire.github.router import _repos
-
-    for tracked in _repos.values():
-        for src in tracked.sources:
-            if src.startswith("team:"):
-                org_slugs.add(src[5:])
-
-    # Prefer slug as ``?team=`` value when unique; fall back to org/slug on clash.
-    by_slug: dict[str, list[str]] = {}
-    for org_slug in sorted(org_slugs):
-        by_slug.setdefault(_team_slug(org_slug).lower(), []).append(org_slug)
-
-    options: list[TeamFilterOption] = []
-    for org_slug in sorted(org_slugs):
-        slug = _team_slug(org_slug)
-        value = slug if len(by_slug[slug.lower()]) == 1 else org_slug
-        options.append(
-            TeamFilterOption(
-                value=value,
-                label=_team_display_name(org_slug),
-                org_slug=org_slug,
-            )
-        )
-    return options
+def _available_teams() -> list[TeamFilterOption]:
+    """Team filter options for the dropdowns, in config order."""
+    return [TeamFilterOption(value=team.id, label=team.display_name) for team in _teams]
 
 
 def _filter_repos_by_team(repos: list[RepoViewModel], team: str | None) -> list[RepoViewModel]:
-    """Keep repos matching ``team`` (``org/slug`` or slug-only)."""
+    """Keep repos belonging to the team id ``team``."""
     return [r for r in repos if _sources_match_team(r.sources, team)]
 
 
@@ -608,7 +557,7 @@ async def dashboard(
     refresh_progress = get_refresh_progress()
 
     all_repos = await _build_repo_viewmodels(include_checks, include_stale)
-    available_teams = _available_teams(all_repos)
+    available_teams = _available_teams()
     team_filter = _normalize_team_filter(team)
     repos = _filter_repos_by_team(all_repos, team_filter)
 

@@ -17,19 +17,30 @@ github:
 #     format: "ssh"           # "ssh" or "gpg"
 #   ssh_known_hosts: "/keys/known_hosts"
 
-# Repositories to track
-repositories:
-  # Individual repo with specific branches
-  - repo: "owner/repo-name"
-    branches: ["main", "develop"]
+# Teams: every tracked repo belongs to a team, so declaring at least one is mandatory.
+#   id          (required) letters, digits, '-' and '_'; used in ?team= filters
+#   label       (optional) display name in the dashboard, defaults to id
+#   github      (optional) "org/team-slug": track all non-archived repos of that GitHub team
+#   exclude     (optional) full repo names to skip from the GitHub team listing
+#   workflows   (optional) include/exclude workflow name globs for GitHub team repos
+#   repositories (optional) explicit repos for this team; combine with github if needed
+# Each team needs `github` or at least one entry in `repositories`.
+# A repo listed in several teams is merged by name.
+teams:
+  - id: "backend"
+    label: "Backend"
+    github: "org-name/backend-team"
+    exclude:
+      - "org-name/excluded-repo"
 
-  # Individual repo (default branch only)
-  - repo: "owner/another-repo"
+  - id: "frontend"
+    repositories:
+      # Individual repo with specific branches
+      - repo: "owner/repo-name"
+        branches: ["main", "develop"]
 
-  # All repos from a GitHub team (archived repos are always excluded)
-  # - team: "org-name/team-slug"
-  #   exclude:
-  #     - "org-name/excluded-repo"
+      # Individual repo (default branch only)
+      - repo: "owner/another-repo"
 
 # Staleness thresholds
 staleness:

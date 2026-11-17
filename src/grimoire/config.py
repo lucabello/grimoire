@@ -5,14 +5,16 @@ from __future__ import annotations
 import os
 import re
 from pathlib import Path
-from typing import Annotated, Literal, Union
+from typing import Literal
 
 import yaml
 from dataconfy import ConfigManager, DataManager
-from pydantic import BaseModel, Field, model_validator
+from pydantic import BaseModel, Field, field_validator, model_validator
 from typing_extensions import Self
 
 _ENV_VAR_PATTERN = re.compile(r"^\$\{([^}]+)\}$")
+_TEAM_ID_PATTERN = re.compile(r"^[A-Za-z0-9][A-Za-z0-9_-]*$")
+_GITHUB_TEAM_PATTERN = re.compile(r"^[^/\s]+/[^/\s]+$")
 
 
 def _get_config_manager() -> ConfigManager:
@@ -97,15 +99,41 @@ class StaticRepoSource(BaseModel):
     workflows: WorkflowFilter = Field(default_factory=WorkflowFilter)
 
 
-class TeamRepoSource(BaseModel):
-    """All repositories belonging to a GitHub team, with optional exclusions."""
+class TeamConfig(BaseModel):
+    """A named group of repositories, declared under ``teams:``."""
 
-    team: str
-    exclude: list[str] = Field(default_factory=list)
-    workflows: WorkflowFilter = Field(default_factory=WorkflowFilter)
+    id: str
+    label: str | None = None
+    github: str | None = None  # "org/team-slug": all repos visible to this GitHub team
+    exclude: list[str] = Field(default_factory=list)  # applies to github listing and repositories
+    workflows: WorkflowFilter = Field(default_factory=WorkflowFilter)  # GitHub team repos only
+    repositories: list[StaticRepoSource] = Field(default_factory=list)  # explicit extra repos
 
+    @field_validator("id")
+    @classmethod
+    def valid_id(cls, value: str) -> str:
+        if not _TEAM_ID_PATTERN.match(value):
+            raise ValueError(f"Team id {value!r} may only contain letters, digits, '-' and '_'")
+        return value
 
-RepoSource = Annotated[Union[StaticRepoSource, TeamRepoSource], Field(discriminator=None)]
+    @field_validator("github")
+    @classmethod
+    def valid_github_team(cls, value: str | None) -> str | None:
+        if value is not None and not _GITHUB_TEAM_PATTERN.match(value):
+            raise ValueError(f"github must be 'org/team-slug', got {value!r}")
+        return value
+
+    @model_validator(mode="after")
+    def has_repo_source(self) -> Self:
+        if self.github is None and not self.repositories:
+            raise ValueError(
+                f"Team {self.id!r} needs 'github' or at least one 'repositories' entry"
+            )
+        return self
+
+    @property
+    def display_name(self) -> str:
+        return self.label or self.id
 
 
 class StalenessConfig(BaseModel):
@@ -179,7 +207,7 @@ class GrimoireConfig(BaseModel):
     github: GitHubConfig
     git: GitConfig | None = None
 
-    repositories: list[RepoSource]
+    teams: list[TeamConfig]
 
     staleness: StalenessConfig = Field(default_factory=StalenessConfig)
     backlog: BacklogConfig = Field(default_factory=BacklogConfig)
@@ -191,19 +219,14 @@ class GrimoireConfig(BaseModel):
     log_file: Path = Field(default_factory=_default_log_file)
 
     @model_validator(mode="after")
-    def at_least_one_repo_source(self) -> Self:
-        if not self.repositories:
-            raise ValueError("At least one repository source must be configured")
+    def validate_teams(self) -> Self:
+        if not self.teams:
+            raise ValueError("At least one team must be configured")
+        ids = [team.id for team in self.teams]
+        duplicates = sorted({team_id for team_id in ids if ids.count(team_id) > 1})
+        if duplicates:
+            raise ValueError(f"Duplicate team ids: {', '.join(duplicates)}")
         return self
-
-
-def _parse_repo_source(raw: dict) -> RepoSource:  # type: ignore[type-arg]
-    """Disambiguate a repository source dict into the correct model."""
-    if "repo" in raw:
-        return StaticRepoSource.model_validate(raw)
-    if "team" in raw:
-        return TeamRepoSource.model_validate(raw)
-    raise ValueError(f"Repository source must have either 'repo' or 'team' key, got: {raw}")
 
 
 def _get_xdg_config_path() -> Path:
@@ -245,10 +268,5 @@ def load_config(path: Path | None = None) -> GrimoireConfig:
 
     resolved = resolve_env_vars(raw)
     assert isinstance(resolved, dict)
-
-    # Manually parse the heterogeneous repositories list
-    raw_repos = resolved.get("repositories", [])
-    parsed_repos = [_parse_repo_source(r) for r in raw_repos]
-    resolved["repositories"] = parsed_repos
 
     return GrimoireConfig.model_validate(resolved)

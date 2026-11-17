@@ -17,7 +17,7 @@ from grimoire.config import (
     GrimoireConfig,
     StalenessConfig,
     StaticRepoSource,
-    TeamRepoSource,
+    TeamConfig,
 )
 from grimoire.database import (
     CachedIssue,
@@ -65,12 +65,21 @@ async def client(engine: AsyncEngine) -> GitHubClient:
 
 
 def _make_config(
-    repos: list[StaticRepoSource | TeamRepoSource] | None = None,
+    repos: list[StaticRepoSource] | None = None,
     staleness: StalenessConfig | None = None,
+    teams: list[TeamConfig] | None = None,
 ) -> GrimoireConfig:
+    """Build a config. Explicit ``repos`` go into a team with id ``owner`` unless ``teams`` is given."""
+    if teams is None:
+        teams = [
+            TeamConfig(
+                id="owner",
+                repositories=repos or [StaticRepoSource(repo="owner/repo1")],
+            )
+        ]
     return GrimoireConfig(
         github=GitHubConfig(token="ghp_test"),
-        repositories=repos or [StaticRepoSource(repo="owner/repo1")],
+        teams=teams,
         staleness=staleness or StalenessConfig(),
     )
 
@@ -100,8 +109,34 @@ async def test_resolve_static_repos(client: GitHubClient) -> None:
     assert len(repos) == 1
     assert repos[0].full_name == "owner/repo1"
     assert repos[0].branches == ["main", "develop"]
-    assert repos[0].source == "static"
-    assert repos[0].sources == ["static"]
+    assert repos[0].source == "team:owner"
+    assert repos[0].sources == ["team:owner"]
+
+
+@respx.mock
+async def test_resolve_static_skips_team_excluded_repos(client: GitHubClient) -> None:
+    """Explicit repositories listed in the team's exclude are not resolved."""
+    respx.get("https://api.github.com/repos/owner/repo2").mock(
+        return_value=httpx.Response(
+            200,
+            json={"full_name": "owner/repo2", "default_branch": "main", "archived": False},
+            headers={"X-RateLimit-Remaining": "4999", "X-RateLimit-Limit": "5000"},
+        )
+    )
+    config = _make_config(
+        teams=[
+            TeamConfig(
+                id="owner",
+                exclude=["owner/repo1"],
+                repositories=[
+                    StaticRepoSource(repo="owner/repo1"),
+                    StaticRepoSource(repo="owner/repo2"),
+                ],
+            )
+        ]
+    )
+    repos = await resolve_repositories(config, client)
+    assert [r.full_name for r in repos] == ["owner/repo2"]
 
 
 @respx.mock
@@ -173,13 +208,13 @@ async def test_resolve_team_repos(client: GitHubClient) -> None:
         )
     )
     config = _make_config(
-        repos=[TeamRepoSource(team="myorg/backend", exclude=["myorg/service-b"])]
+        teams=[TeamConfig(id="backend", github="myorg/backend", exclude=["myorg/service-b"])]
     )
     repos = await resolve_repositories(config, client)
     assert len(repos) == 1
     assert repos[0].full_name == "myorg/service-a"
-    assert repos[0].source == "team:myorg/backend"
-    assert repos[0].sources == ["team:myorg/backend"]
+    assert repos[0].source == "team:backend"
+    assert repos[0].sources == ["team:backend"]
 
 
 @respx.mock
@@ -199,14 +234,14 @@ async def test_resolve_merges_sources_across_teams(client: GitHubClient) -> None
         return_value=httpx.Response(200, json=repo_payload, headers=_rl_headers())
     )
     config = _make_config(
-        repos=[
-            TeamRepoSource(team="myorg/alpha"),
-            TeamRepoSource(team="myorg/beta"),
+        teams=[
+            TeamConfig(id="alpha", github="myorg/alpha"),
+            TeamConfig(id="beta", github="myorg/beta"),
         ]
     )
     repos = await resolve_repositories(config, client)
     assert len(repos) == 1
-    assert repos[0].sources == ["team:myorg/alpha", "team:myorg/beta"]
+    assert repos[0].sources == ["team:alpha", "team:beta"]
 
 
 # ---------------------------------------------------------------------------
@@ -329,7 +364,7 @@ async def test_save_and_load_stats(engine: AsyncEngine) -> None:
             full_name="owner/repo1",
             default_branch="main",
             branches=["main", "develop"],
-            sources=["static"],
+            sources=["team:owner"],
         )
     ]
     now = datetime.now(UTC)
@@ -364,7 +399,7 @@ async def test_save_and_load_stats(engine: AsyncEngine) -> None:
         assert len(cached) == 1
         assert cached[0].full_name == "owner/repo1"
         assert json.loads(cached[0].branches_json) == ["main", "develop"]
-        assert json.loads(cached[0].sources_json) == ["static"]
+        assert json.loads(cached[0].sources_json) == ["team:owner"]
         assert cached[0].total_branches == 5
         assert cached[0].last_commit_at is not None
 
@@ -378,7 +413,7 @@ async def test_save_and_load_stats(engine: AsyncEngine) -> None:
     assert len(loaded_repos) == 1
     assert loaded_repos[0].full_name == "owner/repo1"
     assert loaded_repos[0].branches == ["main", "develop"]
-    assert loaded_repos[0].sources == ["static"]
+    assert loaded_repos[0].sources == ["team:owner"]
     assert len(loaded_stats) == 1
     assert loaded_stats[0].workflows[0].name == "CI"
     assert loaded_stats[0].total_branches == 5
@@ -461,7 +496,7 @@ async def test_refresh_falls_back_to_cache_on_304(
             )
         )
 
-    config = _make_config(repos=[TeamRepoSource(team="myorg/backend")])
+    config = _make_config(teams=[TeamConfig(id="backend", github="myorg/backend")])
     result_repos, result_stats = await refresh_all_stats(config, client)
 
     # Should fall back to cached repos rather than returning empty
@@ -930,7 +965,7 @@ async def test_prune_skipped_with_team_sources(engine: AsyncEngine) -> None:
     )
 
     # Config has a team source — can't know full set, so skip pruning
-    config = _make_config(repos=[TeamRepoSource(team="org/myteam")])
+    config = _make_config(teams=[TeamConfig(id="myteam", github="org/myteam")])
     pruned = await prune_removed_repos(engine, config)
     assert pruned == 0
 
@@ -1159,7 +1194,7 @@ async def test_refresh_tracks_progress(client: GitHubClient, engine: AsyncEngine
             )
         )
 
-    config = _make_config(repos=[TeamRepoSource(team="myorg/backend")])
+    config = _make_config(teams=[TeamConfig(id="backend", github="myorg/backend")])
     result_repos, result_stats = await refresh_all_stats(config, client)
 
     # After refresh completes, progress should be cleared

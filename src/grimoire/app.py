@@ -56,9 +56,9 @@ from grimoire.observability.metrics import router as metrics_router
 from grimoire.web.router import router as web_router
 from grimoire.web.router import (
     set_backlog_config,
-    set_configured_teams,
     set_refresh_schedule,
     set_staleness_config,
+    set_teams,
 )
 from grimoire.workspace.manager import WorkspaceManager
 
@@ -113,10 +113,8 @@ async def lifespan(_app: FastAPI) -> AsyncIterator[None]:
     # Expose refresh schedule to web layer
     set_refresh_schedule(config.refresh_schedule)
 
-    # Expose configured team sources for the dashboard filter dropdown
-    from grimoire.config import TeamRepoSource
-
-    set_configured_teams([s.team for s in config.repositories if isinstance(s, TeamRepoSource)])
+    # Expose configured teams to the dashboard and backlog filter dropdowns
+    set_teams(config.teams)
 
     # Prune DB-cached repos that are no longer in the config
     await prune_removed_repos(engine, config)
