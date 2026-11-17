@@ -5,6 +5,7 @@ from __future__ import annotations
 import re
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
+from fnmatch import fnmatchcase
 from importlib.metadata import version
 from pathlib import Path
 from typing import Any
@@ -16,9 +17,22 @@ from sqlalchemy import text
 from sqlmodel import select
 from sqlmodel.ext.asyncio.session import AsyncSession
 
-from grimoire.config import StalenessConfig, TeamConfig
+from grimoire.config import DashboardConfig, StalenessConfig, TeamConfig
 from grimoire.database import ActionRunRecord
 from grimoire.models import TrackedRepository, WorkflowStatus
+from grimoire.prs import (
+    CI_FILTERS,
+    CI_WARNING_PREFIX,
+    PR_SORT_LABELS,
+    GroupResult,
+    build_group_results,
+    distinct_ci_counts,
+    filter_by_ci,
+    get_prs_config,
+    normalize_author,
+    search_results,
+    sort_pull_requests,
+)
 from grimoire.targeting import TargetSpec
 from grimoire.web.backlog import (
     BacklogItem,
@@ -50,6 +64,69 @@ def set_staleness_config(config: StalenessConfig) -> None:
     """Register the staleness thresholds from the app config."""
     global _staleness_config  # noqa: PLW0603
     _staleness_config = config
+
+
+# Module-level dashboard config — set from app lifespan
+_dashboard_config: DashboardConfig = DashboardConfig()
+
+
+def set_dashboard_config(config: DashboardConfig) -> None:
+    """Register the dashboard options from the app config."""
+    global _dashboard_config  # noqa: PLW0603
+    _dashboard_config = config
+
+
+@dataclass
+class WorkflowColumn:
+    """One dashboard column of workflows, grouped by branch."""
+
+    name: str
+    workflows_by_branch: dict[str, list[WorkflowStatus]] = field(default_factory=dict)
+
+    @property
+    def workflows(self) -> list[WorkflowStatus]:
+        return [wf for wfs in self.workflows_by_branch.values() for wf in wfs]
+
+
+def workflow_column_names(config: DashboardConfig | None = None) -> list[str]:
+    """Return the ordered column names for the workflow cell(s) of the dashboard."""
+    config = config or _dashboard_config
+    if not config.workflow_groups:
+        return ["Workflows"]
+    names = [group.name for group in config.workflow_groups]
+    if config.show_other:
+        names.append("Other")
+    return names
+
+
+def group_workflows(
+    workflows: list[WorkflowStatus], config: DashboardConfig | None = None
+) -> list[WorkflowColumn]:
+    """Split workflows into columns according to the dashboard config.
+
+    Every configured column is always returned (possibly empty) so table cells
+    line up across repositories.
+    """
+    config = config or _dashboard_config
+    columns = [WorkflowColumn(name) for name in workflow_column_names(config)]
+    by_name = {column.name: column for column in columns}
+    for wf in workflows:
+        target: WorkflowColumn | None
+        if not config.workflow_groups:
+            target = columns[0]
+        else:
+            group = next(
+                (
+                    g
+                    for g in config.workflow_groups
+                    if any(fnmatchcase(wf.name, p) for p in g.match)
+                ),
+                None,
+            )
+            target = by_name[group.name] if group else by_name.get("Other")
+        if target is not None:
+            target.workflows_by_branch.setdefault(wf.branch, []).append(wf)
+    return columns
 
 
 # Module-level backlog config — set from app lifespan
@@ -108,6 +185,7 @@ class RepoViewModel:
     warnings: list[str]
     workflows_by_branch: dict[str, list[WorkflowStatus]]
     checks_by_branch: dict[str, list[dict[str, Any]]]
+    workflow_columns: list[WorkflowColumn] = field(default_factory=list)
     fetched_at: datetime | None = None
     last_commit_at: datetime | None = None
     total_branches: int = 0
@@ -487,6 +565,7 @@ async def _build_repo_viewmodels(
                 warnings=stats.warnings,
                 workflows_by_branch=workflows_by_branch,
                 checks_by_branch=checks_by_branch,
+                workflow_columns=group_workflows(stats.workflows),
                 fetched_at=stats.fetched_at,
                 last_commit_at=stats.last_commit_at,
                 total_branches=stats.total_branches,
@@ -603,6 +682,7 @@ async def dashboard(
             "available_teams": available_teams,
             "has_tracked_repos": bool(all_repos),
             "sort_labels": SORT_LABELS,
+            "workflow_column_names": workflow_column_names(),
             "staleness": _staleness_config,
             "time_ago": _time_ago,
             "running": refresh_running,
@@ -653,6 +733,7 @@ async def repository_detail(request: Request, owner: str, name: str) -> HTMLResp
             "repo": repo,
             "branches": branches,
             "workflows_by_branch": workflows_by_branch,
+            "workflow_columns": group_workflows(stats.workflows),
             "checks_by_branch": checks_by_branch,
             "workflow_failures": workflow_failures,
             "workflow_pending": workflow_pending,
@@ -804,6 +885,86 @@ async def checks_page(request: Request) -> HTMLResponse:
 
 
 # ---------------------------------------------------------------------------
+# PRs page
+# ---------------------------------------------------------------------------
+
+
+def _build_prs_context(sort: str, ci: str, search: str, group: str) -> dict[str, Any]:
+    """Template context of the PRs page and partial: groups filtered, sorted and counted."""
+    from grimoire.github.router import _cache, _last_refresh
+
+    config = get_prs_config()
+    names = [g.name for g in config.groups]
+    sort = sort if sort in PR_SORT_LABELS else "attention"
+    ci = ci if ci in CI_FILTERS else ""
+    group = group if group in names else ""
+
+    all_results = build_group_results(config, _cache)
+    scoped = search_results([g for g in all_results if not group or g.name == group], search)
+    shown = [
+        GroupResult(g.name, sort_pull_requests(g.pull_requests, sort))
+        for g in filter_by_ci(scoped, ci)
+    ]
+    ci_warnings = [
+        w for stats in _cache.values() for w in stats.warnings if w.startswith(CI_WARNING_PREFIX)
+    ]
+
+    return {
+        "groups": shown,
+        "matched_totals": {g.name: g.total for g in all_results},
+        "group_names": names,
+        "counts": distinct_ci_counts(scoped),
+        "has_data": bool(_cache),
+        "ci_warnings": ci_warnings,
+        "last_refresh": _last_refresh,
+        "last_refresh_ago": _time_ago(_last_refresh) if _last_refresh else None,
+        "sort": sort,
+        "ci": ci,
+        "search": search.strip(),
+        "group": group,
+        "sort_labels": PR_SORT_LABELS,
+        "time_ago": _time_ago,
+        "normalize_author": normalize_author,
+    }
+
+
+@router.get("/prs", response_class=HTMLResponse)
+async def prs_page(
+    request: Request,
+    sort: str = "attention",
+    ci: str = "",
+    search: str = "",
+    group: str = "",
+) -> HTMLResponse:
+    """PRs page — the open pull requests of each configured group with their CI state."""
+    from grimoire.github.service import get_refresh_progress, is_refresh_running
+
+    progress = get_refresh_progress()
+    context = _build_prs_context(sort, ci, search, group)
+    context.update(
+        running=is_refresh_running(),
+        progress_completed=progress.completed if progress else 0,
+        progress_total=progress.total if progress else 0,
+        oob=False,
+    )
+    return templates.TemplateResponse(request, "prs.html", context=context)
+
+
+@router.get("/partials/prs", response_class=HTMLResponse)
+async def prs_partial(
+    request: Request,
+    sort: str = "attention",
+    ci: str = "",
+    search: str = "",
+    group: str = "",
+) -> HTMLResponse:
+    """Return the filtered PR groups as an HTMX partial."""
+    context = _build_prs_context(sort, ci, search, group)
+    context["oob"] = True
+    return templates.TemplateResponse(request, "partials/prs_groups.html", context=context)
+
+
+# ---------------------------------------------------------------------------
 # HTMX Partial Routes
 # ---------------------------------------------------------------------------
 
@@ -843,6 +1004,7 @@ async def dashboard_matrix_partial(
             "include_checks": include_checks,
             "include_stale": include_stale,
             "team": team_filter or "",
+            "workflow_column_names": workflow_column_names(),
             "staleness": _staleness_config,
             "time_ago": _time_ago,
         },

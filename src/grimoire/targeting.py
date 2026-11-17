@@ -10,7 +10,7 @@ from typing import TYPE_CHECKING
 from pydantic import BaseModel, model_validator
 from typing_extensions import Self
 
-from grimoire.script import create_script_process
+from grimoire.script import create_script_process, kill_process
 
 if TYPE_CHECKING:
     from grimoire.models import TrackedRepository
@@ -130,9 +130,9 @@ async def _script_matches(
         rc = await asyncio.wait_for(proc.wait(), timeout=_TARGETING_TIMEOUT)
         return rc == 0
     except (asyncio.TimeoutError, OSError):
-        if proc is not None and proc.returncode is None:
-            proc.kill()
         return False
     finally:
+        if proc is not None:
+            await kill_process(proc)
         if tmp_script is not None:
             tmp_script.unlink(missing_ok=True)

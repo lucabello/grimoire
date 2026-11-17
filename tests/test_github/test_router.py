@@ -4,8 +4,10 @@ from __future__ import annotations
 
 from datetime import datetime, timedelta, timezone
 
+from httpx import AsyncClient
+
 from grimoire.github.router import update_cache
-from grimoire.models import RepositoryStats, TrackedRepository
+from grimoire.models import RepositoryStats, TrackedRepository, WorkflowStatus
 
 
 def _make_repo(name: str = "owner/repo") -> TrackedRepository:
@@ -62,3 +64,49 @@ async def test_update_cache_preserves_real_fetched_at_from_db():
     assert lr == old_time
     # Verify it's actually in the past
     assert (datetime.now(tz=timezone.utc) - lr).total_seconds() > 3600
+
+
+async def test_repo_detail_exposes_workflow_run_details(async_client: AsyncClient):
+    """GET /api/repos/{owner}/{name} returns the last-run fields, ISO 8601 timestamps and raw conclusion."""
+    stats = _make_stats()
+    stats.workflows = [
+        WorkflowStatus(
+            name="CI",
+            branch="main",
+            status="failure",
+            url="https://github.com/owner/repo/actions/workflows/ci.yml",
+            run_url="https://github.com/owner/repo/actions/runs/42",
+            run_id=42,
+            run_attempt=2,
+            event="push",
+            head_sha="d" * 40,
+            conclusion="timed_out",
+            created_at=datetime(2026, 3, 1, 10, 0, tzinfo=timezone.utc),
+            run_started_at=datetime(2026, 3, 1, 10, 0, 5, tzinfo=timezone.utc),
+            updated_at=datetime(2026, 3, 1, 10, 5, tzinfo=timezone.utc),
+        ),
+        WorkflowStatus(name="Build", branch="main", status="pending", url="u", run_id=43),
+    ]
+    update_cache([_make_repo()], [stats])
+
+    resp = await async_client.get("/api/repos/owner/repo")
+
+    assert resp.status_code == 200
+    ci, build = resp.json()["workflows"]
+    assert ci == {
+        "name": "CI",
+        "branch": "main",
+        "status": "failure",
+        "url": "https://github.com/owner/repo/actions/workflows/ci.yml",
+        "run_url": "https://github.com/owner/repo/actions/runs/42",
+        "run_id": 42,
+        "run_attempt": 2,
+        "event": "push",
+        "head_sha": "d" * 40,
+        "conclusion": "timed_out",
+        "created_at": "2026-03-01T10:00:00Z",
+        "run_started_at": "2026-03-01T10:00:05Z",
+        "updated_at": "2026-03-01T10:05:00Z",
+    }
+    assert build["conclusion"] is None
+    assert build["run_id"] == 43

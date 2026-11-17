@@ -1,6 +1,6 @@
 [project]
 name = "grimoire-dashboard"
-version = "0.2.0"
+version = "0.5.1"
 description = "Self-hostable GitHub repository monitoring dashboard"
 authors = [
     {name = "Luca Bello", email = "lusgabello@gmail.com"},
@@ -17,6 +17,7 @@ dependencies = [
     "pyyaml>=6.0",
     "pydantic>=2.10",
     "sqlmodel>=0.0.22",
+    "sqlalchemy[asyncio]>=2.0",
     "aiosqlite>=0.21",
     "apscheduler>=3.11,<4",
     "prometheus-client>=0.22",
@@ -24,6 +25,7 @@ dependencies = [
     "opentelemetry-sdk>=1.30",
     "opentelemetry-instrumentation-fastapi>=0.51b0",
     "python-multipart>=0.0.18",
+    "alembic>=1.16",
 ]
 
 [project.scripts]
@@ -42,6 +44,7 @@ dev = [
     "respx>=0.22",
     "actionlint-py>=1.7.10.24",
     "uv-secure>=0.15.4",
+    "psutil>=7.2.2",
 ]
 docs = [
     "mkdocs-material>=9.6",

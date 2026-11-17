@@ -1,0 +1,19 @@
+# Tools and system packages for the Docker image. Copy this file next to your
+# config.yaml — the container installs everything on start.
+# Reference: https://mise.jdx.dev/configuration.html
+
+[tools]
+# Prebuilt CLIs from the mise registry: https://mise.jdx.dev/registry.html
+jq = "latest"
+shellcheck = "latest"
+node = "22"
+
+# Other ecosystems via mise backends: https://mise.jdx.dev/dev-tools/backends/
+"pipx:charmcraft" = "latest"
+# "github:owner/repo" = "latest"   # binaries from GitHub releases
+# "cargo:ripgrep" = "latest"       # compiled from source (slow on first start)
+
+[bootstrap.packages]
+# Debian packages, for system libraries and tools mise can't provide.
+# https://mise.jdx.dev/bootstrap/packages/apt.html
+# "apt:libpq5" = "latest"

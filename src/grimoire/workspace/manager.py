@@ -178,7 +178,13 @@ class WorkspaceManager:
             stdout=asyncio.subprocess.PIPE,
             stderr=asyncio.subprocess.PIPE,
         )
-        stdout_bytes, stderr_bytes = await proc.communicate()
+        try:
+            stdout_bytes, stderr_bytes = await proc.communicate()
+        finally:
+            # On cancellation communicate() leaves git running; reap it.
+            if proc.returncode is None:
+                proc.kill()
+                await asyncio.shield(proc.wait())
         stdout = stdout_bytes.decode()
         stderr = stderr_bytes.decode()
 

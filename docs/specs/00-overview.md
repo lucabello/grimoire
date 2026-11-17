@@ -9,11 +9,11 @@ Grimoire is a self-hostable web application for monitoring GitHub repositories. 
 | Language | Python 3.13+ | Automation-native, rapid iteration, existing project setup |
 | Web framework | FastAPI | Async, auto OpenAPI docs, Pydantic integration |
 | Frontend | Jinja2 + HTMX + Tailwind/DaisyUI | Single deployment unit, no JS build step |
-| Database | SQLite via aiosqlite + SQLModel | Zero-config, self-hosting friendly, persistent cache |
+| Database | SQLite via aiosqlite + SQLModel, migrated with Alembic | Zero-config, self-hosting friendly, persistent cache that survives upgrades |
 | Scheduling | APScheduler (v3) | In-process cron, stable, SQLite job store |
 | GitHub API | httpx (async) | Lightweight, async-native HTTP client |
 | Observability | prometheus-client + opentelemetry-sdk | Standard tooling |
-| Deployment | Docker | Bundles system deps (git, gh, gpg, ssh) |
+| Deployment | Docker | Bundles system deps (git, gh, gpg, ssh) and mise for user-declared tools |
 | Command runner | just | Already in project |
 
 ## Project Structure
@@ -25,8 +25,10 @@ grimoire/
 │   ├── app.py                    # FastAPI application factory
 │   ├── config.py                 # YAML config schema + loading
 │   ├── models.py                 # Core domain models (shared)
-│   ├── database.py               # SQLModel engine + session
+│   ├── database.py               # SQLModel engine + session + upgrade_database
+│   ├── migrations/               # Alembic environment + revisions (versions/)
 │   ├── targeting.py              # Shared target resolution (list/regex/script)
+│   ├── prs.py                    # PR groups: matcher, grouping, page filters + API
 │   ├── github/
 │   │   ├── __init__.py
 │   │   ├── client.py             # Low-level GitHub API wrapper
@@ -54,7 +56,8 @@ grimoire/
 │   │   │   ├── base.html
 │   │   │   ├── dashboard.html
 │   │   │   ├── repository.html
-│   │   │   └── actions.html
+│   │   │   ├── actions.html
+│   │   │   └── prs.html
 │   │   └── static/
 │   │       └── styles.css        # Tailwind output
 │   └── observability/
@@ -68,6 +71,7 @@ grimoire/
 │   ├── test_workspace/
 │   ├── test_checks/
 │   ├── test_actions/
+│   ├── test_migrations/
 │   └── test_web/
 ├── data/                          # User-populated, mounted in Docker
 │   ├── checks/                    # Check definition YAML files
@@ -75,7 +79,11 @@ grimoire/
 ├── pyproject.toml
 ├── justfile
 ├── Dockerfile
-├── config.yaml.example
+├── docker/
+│   └── entrypoint.sh              # Installs mise.toml tools, runs data/setup.sh
+├── examples/
+│   ├── config.yaml                # Full config schema, documented in comments
+│   └── mise.toml                  # Tools/packages for the Docker image
 └── README.md
 ```
 
@@ -140,6 +148,14 @@ teams:
           include: ["CI", "Tests *"]   # only track these workflows
           exclude: ["Publish *"]       # exclude these (applied after include)
 
+# PRs page: named groups of the open PRs of the tracked repos (with their CI state)
+prs:
+  groups:
+    - name: "Maintenance"
+      authors: ["app/renovate", "app/dependabot"]   # app/x also matches x[bot]
+      labels: ["dependencies"]
+      repos: ["owner/*"]           # optional; default: all tracked repos
+
 # Staleness thresholds
 staleness:
   pull_requests_days: 30   # PRs with no push/comment for this many days
@@ -170,6 +186,7 @@ log_file: "./grimoire.log"
 | `GET` | `/api/actions/{slug}/runs` | List run history |
 | `GET` | `/api/actions/{slug}/runs/{id}` | Get specific run details + logs |
 | `POST` | `/api/actions/{slug}/run` | Trigger action (optional `?repo=`); 409 if running |
+| `GET` | `/api/prs` | Open PRs of each configured PR group with CI, review and merge state (cache only; no GitHub calls) |
 | `GET` | `/health` | Health check (for Docker HEALTHCHECK / k8s probes) |
 
 Auto-generated OpenAPI docs are available at `/docs` (Swagger UI) and `/redoc`.
@@ -180,6 +197,6 @@ Auto-generated OpenAPI docs are available at `/docs` (Swagger UI) and `/redoc`.
 - **Concurrency:** GitHub API calls and check executions use bounded concurrency (`asyncio.Semaphore(10)`) to avoid overwhelming the API or the host.
 - **Error handling:** Individual check/action failures never crash the application. Log errors, record failure in DB, continue with remaining repos. GitHub API failures are surfaced as per-repo warnings on the dashboard — never silent failures.
 - **Disk caching:** All GitHub data is persisted to SQLite. On startup, the app loads cached data and is immediately usable. Refreshes happen in the background. The dashboard always shows the `fetched_at` timestamp so the user knows data freshness.
-- **API efficiency:** Use conditional requests (ETags) and `per_page=100` to minimize GitHub API calls. GraphQL batching is deferred as a future optimization. After initial fetch, most refreshes cost zero API calls due to ETags.
+- **API efficiency:** Use conditional requests (ETags) and `per_page=100` to minimize GitHub API calls. GraphQL is used only to batch the CI, review and merge state of the PRs that match a PR group (about one point of the separate GraphQL limit per 50 PRs). After initial fetch, most REST refreshes cost zero API calls due to ETags.
 - **Idempotency:** Re-running a check or action for the same repo+branch is always safe. The DB stores all results (not just latest).
 - **Testing strategy:** Use `respx` for GitHub API mocking, temp directories for workspace tests, and `httpx.AsyncClient` (via FastAPI's `TestClient`) for API endpoint tests.

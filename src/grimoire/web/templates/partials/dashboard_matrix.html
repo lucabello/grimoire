@@ -1,3 +1,4 @@
+{% from "partials/_workflow_macros.html" import workflow_icon %}
 <table class="table table-xs w-full">
     <thead>
         <tr class="text-xs uppercase tracking-wider">
@@ -30,7 +31,9 @@
                 hx-target="#repo-grid" hx-swap="innerHTML">
                 Branches {% if sort == 'branches' %}{% if dir == 'asc' %}▲{% else %}▼{% endif %}{% endif %}
             </th>
-            <th class="text-center py-1">Workflows</th>
+            {% for column_name in workflow_column_names %}
+            <th class="text-center py-1">{{ column_name }}</th>
+            {% endfor %}
             <th class="text-center py-1">Checks</th>
         </tr>
     </thead>
@@ -69,17 +72,15 @@
                 {{ repo.total_branches }}
             </td>
 
-            {# ── Workflows ── #}
+            {# ── Workflows (one cell per column) ── #}
+            {% for column in repo.workflow_columns %}
             <td class="text-center py-0.5">
                 <div class="flex items-center justify-center gap-0.5">
-                    {% for branch, workflows in repo.workflows_by_branch.items() %}
+                    {% for branch, workflows in column.workflows_by_branch.items() %}
                         {% for wf in workflows %}
                         <div class="tooltip tooltip-top" data-tip="{{ wf.name }} ({{ branch }}): {{ wf.status }}">
                             <a href="{{ wf.run_url or wf.url }}" target="_blank" rel="noopener">
-                                {% if wf.status == "success" %}<i class="fa-solid fa-check status-icon status-icon-success"></i>
-                                {% elif wf.status == "failure" %}<i class="fa-solid fa-xmark status-icon status-icon-failure"></i>
-                                {% elif wf.status == "pending" %}<i class="fa-solid fa-clock status-icon status-icon-pending"></i>
-                                {% else %}<i class="fa-solid fa-minus status-icon status-icon-unknown"></i>{% endif %}
+                                {{ workflow_icon(wf) }}
                             </a>
                         </div>
                         {% endfor %}
@@ -87,6 +88,7 @@
                     {% endfor %}
                 </div>
             </td>
+            {% endfor %}
 
             {# ── Checks ── #}
             <td class="text-center py-0.5">

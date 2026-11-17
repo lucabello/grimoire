@@ -1,0 +1,156 @@
+{# PR groups partial — rendered inside #prs-content (page and HTMX partial).
+   With oob, it also refreshes the "last updated" line and the form's hidden ci input. #}
+
+{% macro ci_icon(pr, ci_url, time_ago) -%}
+{% set as_of = ' (as of ' ~ time_ago(pr.ci_fetched_at) ~ ')' if pr.ci_fetched_at else '' %}
+{% if pr.ci_state == "success" %}
+<a href="{{ ci_url }}" target="_blank" rel="noopener noreferrer" title="CI passing{{ as_of }}"><i class="fa-solid fa-check status-icon status-icon-success"></i></a>
+{% elif pr.ci_state == "failure" %}
+<a href="{{ ci_url }}" target="_blank" rel="noopener noreferrer" title="CI failing{{ as_of }}"><i class="fa-solid fa-xmark status-icon status-icon-failure"></i></a>
+{% elif pr.ci_state == "pending" %}
+<a href="{{ ci_url }}" target="_blank" rel="noopener noreferrer" title="CI pending{{ as_of }}: checks still running or waiting (for example Renovate's stability days)"><i class="fa-solid fa-clock status-icon status-icon-pending"></i></a>
+{% elif pr.ci_state == "none" %}
+<a href="{{ ci_url }}" target="_blank" rel="noopener noreferrer" title="No checks reported{{ as_of }}"><i class="fa-solid fa-minus status-icon status-icon-unknown"></i></a>
+{% else %}
+<i class="fa-solid fa-minus status-icon status-icon-unknown" title="CI status not available"></i>
+{% endif %}
+{%- endmacro %}
+
+{% macro stamp(dt, time_ago) -%}
+<span class="whitespace-nowrap font-mono-nums" title="{{ dt.strftime('%Y-%m-%d %H:%M UTC') }}">{{ time_ago(dt) }}</span>
+{%- endmacro %}
+
+{% macro chip(key, label, count, icon_class, ci, base_path) -%}
+{% set active = (ci == key) if key else (not ci) %}
+<button type="button"
+        class="btn btn-sm gap-2 {% if active %}btn-primary{% else %}btn-ghost bg-base-100{% endif %}"
+        hx-get="{{ base_path }}/partials/prs"
+        hx-include="#prs-filters"
+        hx-vals='{"ci": "{{ '' if active else key }}"}'
+        hx-target="#prs-content"
+        hx-swap="innerHTML">
+    {% if icon_class %}<i class="{{ icon_class }}"></i>{% endif %}
+    {{ label }}
+    <span class="font-mono-nums opacity-70">{{ count }}</span>
+</button>
+{%- endmacro %}
+
+{% if oob %}
+<p id="prs-updated" class="text-sm opacity-60 mt-1" hx-swap-oob="true">{% if last_refresh %}Last updated {{ last_refresh_ago }}{% endif %}</p>
+<input type="hidden" id="prs-ci" name="ci" value="{{ ci }}" hx-swap-oob="true">
+{% endif %}
+
+{% if not has_data %}
+<div class="hero min-h-[30vh]">
+    <div class="hero-content text-center">
+        <div class="max-w-md">
+            <div class="text-4xl mb-3">⏳</div>
+            <h2 class="text-xl font-bold mb-2">Waiting for the first refresh</h2>
+            <p class="opacity-60">Grimoire has not fetched any repository data yet. The pull requests appear here once the first refresh completes; use the Refresh button to start it now.</p>
+        </div>
+    </div>
+</div>
+{% else %}
+
+{% if ci_warnings %}
+<div class="alert alert-warning mb-4 shadow-sm py-2" title="{{ ci_warnings | join('\n') }}">
+    <i class="fa-solid fa-circle-exclamation shrink-0"></i>
+    <span class="text-sm">CI status could not be fetched ({{ ci_warnings | length }} warning{{ '' if ci_warnings | length == 1 else 's' }}); affected rows show the last known state. Hover for details.</span>
+</div>
+{% endif %}
+
+{# ── Summary chips (distinct PRs across the shown groups) ── #}
+<div class="flex flex-wrap items-center gap-2 mb-4">
+    {{ chip('', 'Total', counts.total, '', ci, base_path) }}
+    {{ chip('failure', 'Failing', counts.failure, 'fa-solid fa-xmark text-error', ci, base_path) }}
+    {{ chip('pending', 'Pending', counts.pending, 'fa-solid fa-clock text-warning', ci, base_path) }}
+    {{ chip('success', 'Passing', counts.success, 'fa-solid fa-check text-success', ci, base_path) }}
+    {{ chip('none', 'No checks', counts.none, 'fa-solid fa-minus opacity-60', ci, base_path) }}
+    {% if counts.unknown or ci == 'unknown' %}
+    {{ chip('unknown', 'Unknown', counts.unknown, 'fa-solid fa-question opacity-60', ci, base_path) }}
+    {% endif %}
+</div>
+
+{# ── Group sections ── #}
+<div class="flex flex-col gap-4">
+{% for g in groups %}
+<details open class="bg-base-100 rounded-lg shadow-sm" id="prs-group-{{ loop.index }}">
+    <summary class="cursor-pointer px-5 py-3 flex flex-wrap items-center gap-3 select-none hover:bg-base-200 rounded-lg">
+        <span class="text-base font-semibold">{{ g.name }}</span>
+        <span class="text-sm opacity-70">
+            {{ g.total }} PR{{ '' if g.total == 1 else 's' }} in {{ g.repo_count }} repo{{ '' if g.repo_count == 1 else 's' }}
+            {%- if g.failing %} · <span class="text-error">{{ g.failing }} failing</span>{% endif -%}
+            {%- if g.pending %} · <span class="text-warning">{{ g.pending }} pending</span>{% endif -%}
+        </span>
+        <i class="fa-solid fa-chevron-down text-xs opacity-40 ml-auto"></i>
+    </summary>
+
+    {% if g.pull_requests %}
+    <div class="overflow-x-auto">
+        <table class="table table-sm">
+            <thead>
+                <tr class="text-xs uppercase opacity-60">
+                    <th class="w-10 text-center">CI</th>
+                    <th>Repository</th>
+                    <th>Pull request</th>
+                    <th>Author</th>
+                    <th>Review</th>
+                    <th>Age</th>
+                    <th>Updated</th>
+                </tr>
+            </thead>
+            <tbody>
+            {% for item in g.pull_requests %}
+            {% set pr = item.pr %}
+            <tr class="hover">
+                <td class="text-center {% if pr.ci_state == 'failure' %}border-l-4 border-error{% else %}border-l-4 border-transparent{% endif %}">{{ ci_icon(pr, item.ci_url, time_ago) }}</td>
+                <td class="whitespace-nowrap">
+                    <a href="{{ base_path }}/repo/{{ item.repo }}" class="link link-hover font-semibold">
+                        <span class="opacity-60">{{ item.repo.split('/')[0] }}/</span>{{ item.repo.split('/')[1] }}
+                    </a>
+                </td>
+                <td class="min-w-[18rem] max-w-xl">
+                    <a href="{{ pr.url }}" target="_blank" rel="noopener noreferrer" class="hover:text-primary font-medium">
+                        <span class="opacity-50 font-mono-nums">#{{ pr.number }}</span> {{ pr.title }}
+                    </a>
+                    <div class="flex flex-wrap items-center gap-1 mt-1 text-xs">
+                        {% if pr.draft %}<span class="badge badge-ghost badge-sm">draft</span>{% endif %}
+                        {% if pr.auto_merge %}<span class="badge badge-info badge-outline badge-sm gap-1" title="Auto-merge is enabled"><i class="fa-solid fa-bolt"></i>auto-merge</span>{% endif %}
+                        {% for label in pr.labels %}<span class="badge badge-outline badge-sm">{{ label }}</span>{% endfor %}
+                        {% if pr.head_ref %}<span class="opacity-50 font-mono-nums truncate max-w-[16rem]" title="{{ pr.head_ref }}"><i class="fa-solid fa-code-branch"></i> {{ pr.head_ref }}</span>{% endif %}
+                        {% if pr.base_ref and pr.base_ref != item.default_branch %}<span class="opacity-50 font-mono-nums" title="Base branch"><i class="fa-solid fa-arrow-right"></i> {{ pr.base_ref }}</span>{% endif %}
+                    </div>
+                </td>
+                <td class="whitespace-nowrap text-sm">
+                    {% if pr.author.endswith('[bot]') %}<i class="fa-solid fa-robot opacity-60" title="Bot"></i> {% endif %}{{ normalize_author(pr.author) }}
+                </td>
+                <td class="text-sm">
+                    {% set rd = pr.review_decision %}
+                    {% set ms = pr.merge_state %}
+                    <div class="flex flex-wrap gap-1 [&>.badge]:whitespace-nowrap">
+                        {% if rd == 'approved' %}<span class="badge badge-success badge-sm gap-1"><i class="fa-solid fa-check"></i>approved</span>
+                        {% elif rd == 'changes_requested' %}<span class="badge badge-error badge-sm">changes requested</span>
+                        {% elif rd == 'review_required' %}<span class="badge badge-outline badge-sm">review required</span>{% endif %}
+                        {% if ms == 'dirty' %}<span class="badge badge-error badge-outline badge-sm" title="Merge conflicts with the base branch">conflicts</span>
+                        {% elif ms == 'behind' %}<span class="badge badge-warning badge-outline badge-sm" title="Head branch is behind the base branch">behind</span>
+                        {% elif ms == 'blocked' and rd not in ('review_required', 'changes_requested') %}<span class="badge badge-ghost badge-outline badge-sm" title="Merging is blocked by branch protection">blocked</span>
+                        {% elif ms == 'clean' %}<span class="badge badge-success badge-outline badge-sm" title="Ready to merge">ready</span>{% endif %}
+                        {% if not rd and ms not in ('dirty', 'behind', 'blocked', 'clean') %}<span class="opacity-40">—</span>{% endif %}
+                    </div>
+                </td>
+                <td class="text-sm">{{ stamp(pr.created_at, time_ago) }}</td>
+                <td class="text-sm opacity-70">{% if pr.updated_at %}{{ stamp(pr.updated_at, time_ago) }}{% else %}—{% endif %}</td>
+            </tr>
+            {% endfor %}
+            </tbody>
+        </table>
+    </div>
+    {% elif matched_totals[g.name] == 0 %}
+    <p class="px-5 pb-4 text-sm opacity-60">No open PRs match this group 🎉</p>
+    {% else %}
+    <p class="px-5 pb-4 text-sm opacity-60">No PRs match the current filters.</p>
+    {% endif %}
+</details>
+{% endfor %}
+</div>
+{% endif %}

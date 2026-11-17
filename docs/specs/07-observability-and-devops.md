@@ -131,6 +131,13 @@ RUN curl -fsSL https://cli.github.com/packages/githubcli-archive-keyring.gpg \
 # Install uv
 COPY --from=ghcr.io/astral-sh/uv:latest /uv /usr/local/bin/uv
 
+# Install mise (pinned); tools live on a volume so they survive re-creation
+ARG MISE_VERSION=v2026.10.7
+RUN curl -fsSL https://mise.run \
+    | MISE_VERSION="${MISE_VERSION}" MISE_INSTALL_PATH=/usr/local/bin/mise sh
+ENV MISE_DATA_DIR=/app/tools MISE_YES=1
+VOLUME /app/tools
+
 WORKDIR /app
 
 # Install dependencies (cached layer)
@@ -139,8 +146,7 @@ RUN uv sync --no-dev --frozen
 
 # Copy application
 COPY src/ src/
-COPY docker-entrypoint.sh /usr/local/bin/
-COPY config.yaml.example ./
+COPY docker/entrypoint.sh /usr/local/bin/docker-entrypoint.sh
 
 EXPOSE 8000
 
@@ -151,33 +157,37 @@ ENTRYPOINT ["docker-entrypoint.sh"]
 CMD ["uv", "run", "uvicorn", "grimoire.app:create_app", "--factory", "--host", "0.0.0.0", "--port", "8000"]
 ```
 
-### `docker-entrypoint.sh`
+### `docker/entrypoint.sh`
 
-The entrypoint script runs a user-provided setup script before starting the application. This is the generic mechanism for installing external tools needed by checks or actions (e.g., `charmcraft`, Go binaries, downloaded CLIs):
+The entrypoint installs the external tools needed by checks and actions before starting the application. Two mechanisms, in order:
 
-```sh
-#!/bin/sh
-set -e
+1. **`mise.toml`** next to the config file (`dirname $GRIMOIRE_CONFIG`, default `/app/config.yaml`). If present:
+   - `MISE_GLOBAL_CONFIG_FILE` is exported to point at it.
+   - If it contains a `[bootstrap.packages]` table: `mise bootstrap packages apply --manager apt` (Debian packages; the container runs as root).
+   - `mise install` (tools).
+   - `mise bin-paths` is prepended to `PATH`.
+2. **`data/setup.sh`** (override with `GRIMOIRE_SETUP_SCRIPT`), run after mise so it can use the installed tools.
 
-# Run user-provided setup script if it exists (install external tools, etc.)
-if [ -f /app/data/setup.sh ]; then
-    echo "Running data/setup.sh ..."
-    sh /app/data/setup.sh
-fi
+Then `exec "$@"`. A failure in any step prints a `WARNING` and continues — the app still starts and affected checks report errors.
 
-exec "$@"
+Example `mise.toml` (see `examples/mise.toml`):
+
+```toml
+[tools]
+jq = "latest"
+"pipx:charmcraft" = "latest"
+
+[bootstrap.packages]
+"apt:libpq5" = "latest"
 ```
 
-Users place a `setup.sh` in their `data/` directory alongside check and action definitions. The script can use any installation method:
+#### Design decisions
 
-```sh
-# data/setup.sh — example
-pip install --no-cache-dir charmcraft
-go install github.com/some/tool@latest
-wget -qO /usr/local/bin/mytool https://example.com/mytool && chmod +x /usr/local/bin/mytool
-```
-
-The script runs on every container start, so commands should be idempotent.
+- **mise over per-ecosystem config keys.** One declarative file covers registry tools, pip/npm/cargo/go packages and GitHub release binaries via mise backends, so Grimoire does not need to know about any package manager. Snaps are deliberately unsupported (snapd does not run in containers); use the PyPI/release-binary distribution or `setup.sh` (e.g. `unsquashfs`) instead.
+- **No "already installed" stamp.** `mise install` and `mise bootstrap packages apply` are idempotent and near-instant when nothing is missing. A stamp stored on the tools volume would go stale when the container is re-created, because apt packages live in the container layer while mise tools live on the volume.
+- **`PATH` entries instead of shims.** Checks run inside cloned repositories; a repo-local mise config could make shim lookups fail or prompt for trust. `mise bin-paths` is deterministic.
+- **`mise.toml` beside `config.yaml`, not in `data/`.** It is deployment configuration, not a check/action definition. The entrypoint honours `GRIMOIRE_CONFIG` only (not the `--config-file` CLI flag, which it cannot see). With the legacy single-file mount (`/app/config.yaml`) the sibling directory is `/app`, so mise is simply skipped.
+- **`[bootstrap.packages]` is mise's newer, still-evolving apt integration** (earlier docs call it `[system.packages]`). The mise version is therefore pinned via `MISE_VERSION`; bump it deliberately.
 
 ### `.dockerignore`
 
@@ -199,8 +209,9 @@ build/
 
 | Mount point | Purpose |
 |-------------|---------|
-| `/app/config.yaml` | Application configuration (bind mount) |
-| `/app/data/` | Check and action YAML definitions |
+| `/app/config/` | `config.yaml` and optional `mise.toml` (bind mount; set `GRIMOIRE_CONFIG=/app/config/config.yaml`) |
+| `/app/data/` | Check and action YAML definitions, optional `setup.sh` |
+| `/app/tools/` | mise-installed tools and cache (named volume) |
 | `/app/workspace/` | Cloned repository working directories |
 | `/app/state/` | Persistent state: SQLite database + log file |
 | `/keys/` | SSH/GPG keys for signing |
@@ -213,15 +224,19 @@ services:
     build: .
     ports:
       - "8000:8000"
+    environment:
+      GRIMOIRE_CONFIG: /app/config/config.yaml
     volumes:
-      - ./config.yaml:/app/config.yaml:ro
+      - ./config:/app/config:ro      # config.yaml + optional mise.toml
       - ./data:/app/data:ro
+      - grimoire-tools:/app/tools
       - grimoire-workspace:/app/workspace
       - grimoire-state:/app/state
       - ~/.ssh/id_ed25519:/keys/id_ed25519:ro
       - ~/.ssh/known_hosts:/keys/known_hosts:ro
 
 volumes:
+  grimoire-tools:
   grimoire-workspace:
   grimoire-state:    # contains grimoire.db + grimoire.log
 ```
@@ -252,8 +267,10 @@ docker-build:
 [group("build")]
 docker-run:
     docker run -p 8000:8000 \
-      -v ./config.yaml:/app/config.yaml:ro \
+      -e GRIMOIRE_CONFIG=/app/config/config.yaml \
+      -v ./config:/app/config:ro \
       -v ./data:/app/data:ro \
+      -v grimoire-tools:/app/tools \
       grimoire
 ```
 
@@ -280,6 +297,10 @@ Ensure all API routes have:
 - [ ] Log entries include trace_id and span_id when within a request context
 - [ ] FastAPI requests produce spans via OpenTelemetry instrumentation
 - [ ] Docker image builds successfully
+- [ ] Tools and `[bootstrap.packages]` from a `mise.toml` next to the config file are installed on start and available to checks
+- [ ] Re-starting with a populated tools volume does not re-download mise tools
+- [ ] `data/setup.sh` still runs (after mise), and failures in mise or the script do not stop the app starting
+- [ ] Without a `mise.toml`, mise is never invoked (legacy deployments unchanged)
 - [ ] Container starts and serves the dashboard with all functionality
 - [ ] `just dev` and `just run` work correctly
 - [ ] `just docker-build` and `just docker-run` work correctly

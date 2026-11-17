@@ -35,6 +35,10 @@ Every check definition has these fields:
 | `enabled` | No | `true` (default) or `false` |
 | `severity` | No | `"error"` (default) or `"warning"` — controls how failures appear on the dashboard |
 
+!!! tip "Need a tool in your script?"
+
+    In Docker, declare extra tools (`jq`, `shellcheck`, ...) in a `mise.toml` next to `config.yaml`. See [Install tools for your checks](install-tools.md).
+
 ## Exit codes
 
 A check script communicates its result via exit code:

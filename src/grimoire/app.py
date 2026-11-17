@@ -27,10 +27,10 @@ from grimoire.checks.router import set_checks_state
 from grimoire.checks.scheduler import register_checks
 from grimoire.config import load_config
 from grimoire.database import (
-    create_tables,
     get_engine,
     restore_action_toggles,
     restore_check_toggles,
+    upgrade_database,
 )
 from grimoire.github.client import GitHubClient
 from grimoire.github.router import (
@@ -53,9 +53,12 @@ from grimoire.models import TrackedRepository
 from grimoire.observability.logging import setup_logging
 from grimoire.observability.metrics import DATA_REFRESH_DURATION, update_repo_metrics
 from grimoire.observability.metrics import router as metrics_router
+from grimoire.prs import router as prs_router
+from grimoire.prs import set_prs_config
 from grimoire.web.router import router as web_router
 from grimoire.web.router import (
     set_backlog_config,
+    set_dashboard_config,
     set_refresh_schedule,
     set_staleness_config,
     set_teams,
@@ -97,7 +100,7 @@ async def lifespan(_app: FastAPI) -> AsyncIterator[None]:
 
     # Database
     engine = await get_engine(str(config.database_path))
-    await create_tables(engine)
+    await upgrade_database(engine)
 
     # Clean up any run records left in 'running' state from a previous crash
     from grimoire.database import cleanup_stale_runs
@@ -106,6 +109,12 @@ async def lifespan(_app: FastAPI) -> AsyncIterator[None]:
 
     # Expose staleness thresholds to web layer
     set_staleness_config(config.staleness)
+
+    # Expose dashboard config to web layer
+    set_dashboard_config(config.dashboard)
+
+    # Expose PR groups to the API and web layer
+    set_prs_config(config.prs)
 
     # Expose backlog config to web layer
     set_backlog_config(config.backlog, config_file_path)
@@ -299,6 +308,7 @@ def create_app() -> FastAPI:
     app.include_router(refresh_router, prefix="/api")
     app.include_router(checks_router, prefix="/api")
     app.include_router(actions_router, prefix="/api")
+    app.include_router(prs_router, prefix="/api")
 
     # Observability
     app.include_router(metrics_router)

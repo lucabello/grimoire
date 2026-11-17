@@ -9,7 +9,7 @@ from typing import Literal
 
 import yaml
 from dataconfy import ConfigManager, DataManager
-from pydantic import BaseModel, Field, field_validator, model_validator
+from pydantic import BaseModel, Field, ValidationInfo, field_validator, model_validator
 from typing_extensions import Self
 
 _ENV_VAR_PATTERN = re.compile(r"^\$\{([^}]+)\}$")
@@ -185,6 +185,117 @@ class BacklogConfig(BaseModel):
     repository_weights: list[RepositoryWeightRule] = Field(default_factory=list)
 
 
+class WorkflowGroup(BaseModel):
+    """A named dashboard column holding workflows whose name matches any glob pattern."""
+
+    name: str = Field(min_length=1)
+    match: list[str] = Field(min_length=1)
+
+    @field_validator("name")
+    @classmethod
+    def name_not_blank(cls, value: str) -> str:
+        value = value.strip()
+        if not value:
+            raise ValueError("Workflow group name must not be blank")
+        return value
+
+
+class DashboardConfig(BaseModel):
+    """Dashboard presentation options.
+
+    With no ``workflow_groups`` all workflows share a single "Workflows" column.
+    Otherwise each group becomes a column (first matching group wins) and
+    unmatched workflows go to a trailing "Other" column unless ``show_other`` is false.
+    """
+
+    workflow_groups: list[WorkflowGroup] = Field(default_factory=list)
+    show_other: bool = True
+
+    @model_validator(mode="after")
+    def unique_group_names(self) -> Self:
+        names = [group.name for group in self.workflow_groups]
+        if len(names) != len(set(names)):
+            raise ValueError("Workflow group names must be unique")
+        if self.show_other and "Other" in names:
+            raise ValueError(
+                'Workflow group name "Other" is reserved for the unmatched column; '
+                "rename the group or set show_other to false"
+            )
+        return self
+
+
+def _clean_value(value: str, field: str) -> str:
+    value = value.strip()
+    if not value:
+        raise ValueError(f"PR group '{field}' values must not be blank")
+    return value
+
+
+class PRGroup(BaseModel):
+    """A named set of pull-request matchers selecting open PRs of the tracked repositories.
+
+    Values of one list matcher are alternatives (OR); different matchers combine with AND.
+    ``authors`` ignore case, a leading ``app/`` and a trailing ``[bot]`` (``app/renovate``
+    matches ``renovate[bot]``). ``title_words`` are case-insensitive substrings. ``repos`` is
+    an optional scope: fnmatch patterns on the tracked repository full names (all tracked
+    repositories when empty).
+    """
+
+    name: str
+    authors: list[str] = Field(default_factory=list)
+    labels: list[str] = Field(default_factory=list)
+    title_words: list[str] = Field(default_factory=list)
+    draft: bool | None = None
+    base: str | None = None
+    repos: list[str] = Field(default_factory=list)
+
+    @field_validator("name")
+    @classmethod
+    def name_not_blank(cls, value: str) -> str:
+        value = value.strip()
+        if not value:
+            raise ValueError("PR group name must not be blank")
+        return value
+
+    @field_validator("base")
+    @classmethod
+    def base_valid(cls, value: str | None) -> str | None:
+        return None if value is None else _clean_value(value, "base")
+
+    @field_validator("authors", "labels", "title_words", "repos")
+    @classmethod
+    def entries_valid(cls, values: list[str], info: ValidationInfo) -> list[str]:
+        return [_clean_value(value, str(info.field_name)) for value in values]
+
+    @model_validator(mode="after")
+    def at_least_one_matcher(self) -> Self:
+        if not (
+            self.authors
+            or self.labels
+            or self.title_words
+            or self.draft is not None
+            or self.base is not None
+        ):
+            raise ValueError(
+                f"PR group '{self.name}' needs at least one matcher: "
+                "authors, labels, title_words, draft or base"
+            )
+        return self
+
+
+class PRsConfig(BaseModel):
+    """Configuration of the PRs page: named groups of open pull requests."""
+
+    groups: list[PRGroup] = Field(default_factory=list)
+
+    @model_validator(mode="after")
+    def unique_group_names(self) -> Self:
+        names = [group.name for group in self.groups]
+        if len(names) != len(set(names)):
+            raise ValueError("PR group names must be unique")
+        return self
+
+
 def _default_data_dir() -> Path:
     return _get_data_manager().data_dir / "data"
 
@@ -211,6 +322,8 @@ class GrimoireConfig(BaseModel):
 
     staleness: StalenessConfig = Field(default_factory=StalenessConfig)
     backlog: BacklogConfig = Field(default_factory=BacklogConfig)
+    dashboard: DashboardConfig = Field(default_factory=DashboardConfig)
+    prs: PRsConfig = Field(default_factory=PRsConfig)
     refresh_schedule: str = "*/5 * * * *"
 
     data_dir: Path = Field(default_factory=_default_data_dir)

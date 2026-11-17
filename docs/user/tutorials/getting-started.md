@@ -14,7 +14,7 @@ You need:
 ```bash
 git clone https://github.com/lucabello/grimoire.git
 cd grimoire
-cp config.yaml.example config.yaml
+cp examples/config.yaml config.yaml
 ```
 
 Open `config.yaml` and set your token and the repositories you want to monitor:
@@ -58,9 +58,10 @@ teams:
 
 === "Docker Compose"
 
-    For a containerised deployment:
+    For a containerised deployment. The bundled `docker-compose.yml` reads its configuration from a `config/` directory, so move the file there first:
 
     ```bash
+    mkdir -p config && mv config.yaml config/
     export GITHUB_TOKEN="ghp_your_token_here"
     docker compose up -d
     ```
@@ -79,6 +80,7 @@ Grimoire fetches data from the GitHub API immediately on startup. The dashboard 
 | Backlog | `/backlog` | Prioritised list of problems across repos |
 | Checks | `/checks` | Custom validation scripts and their results |
 | Actions | `/actions` | Automated remediation tasks and run logs |
+| PRs | `/prs` | Open PRs of the configured groups (for example Renovate and Dependabot) with their CI status, if configured |
 | API docs | `/docs` | Interactive Swagger UI |
 
 ## What's next

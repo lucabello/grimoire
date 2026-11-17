@@ -76,6 +76,18 @@ refresh_schedule: "*/5 * * * *"
 #         - "org/critical-repo"
 #       weight: 5.0
 
+# PRs page: named groups of the open PRs of the tracked repositories, with their CI
+# status. Values of one list are alternatives; different fields must all match.
+# prs:
+#   groups:
+#     - name: "Maintenance"
+#       authors: ["app/renovate", "app/dependabot"]   # also matches renovate[bot]
+#       labels: ["dependencies"]    # alternatives
+#       title_words: ["deps"]       # case-insensitive words in the title (not a regex)
+#       draft: false
+#       base: main
+#       repos: ["owner/*"]          # optional fnmatch scope; default: all tracked repos
+
 # Paths
 data_dir: "./data"           # Contains checks/ and actions/ subdirectories
 workspace_dir: "./workspace" # Where repos are cloned

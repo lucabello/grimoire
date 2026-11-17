@@ -8,7 +8,7 @@ from sqlmodel.ext.asyncio.session import AsyncSession
 
 from grimoire.checks.engine import OUTPUT_SIZE_CAP, run_check
 from grimoire.checks.loader import CheckDefinition
-from grimoire.database import CheckResultRecord, create_tables, get_engine
+from grimoire.database import CheckResultRecord, get_engine, upgrade_database
 from grimoire.models import TrackedRepository
 from grimoire.targeting import TargetSpec
 
@@ -53,7 +53,7 @@ def _repo() -> TrackedRepository:
 class TestRunCheck:
     async def test_successful_check(self, tmp_path: Path) -> None:
         engine = await get_engine(str(tmp_path / "test.db"))
-        await create_tables(engine)
+        await upgrade_database(engine)
         ws = MockWorkspace(tmp_path)
 
         result = await run_check(_check("echo hello"), _repo(), "main", ws, engine)  # type: ignore[arg-type]
@@ -66,7 +66,7 @@ class TestRunCheck:
 
     async def test_failed_check(self, tmp_path: Path) -> None:
         engine = await get_engine(str(tmp_path / "test.db"))
-        await create_tables(engine)
+        await upgrade_database(engine)
         ws = MockWorkspace(tmp_path)
 
         result = await run_check(_check("exit 1"), _repo(), "main", ws, engine)  # type: ignore[arg-type]
@@ -76,7 +76,7 @@ class TestRunCheck:
 
     async def test_failed_check_stderr_labeled(self, tmp_path: Path) -> None:
         engine = await get_engine(str(tmp_path / "test.db"))
-        await create_tables(engine)
+        await upgrade_database(engine)
         ws = MockWorkspace(tmp_path)
 
         result = await run_check(
@@ -94,7 +94,7 @@ class TestRunCheck:
 
     async def test_output_capture(self, tmp_path: Path) -> None:
         engine = await get_engine(str(tmp_path / "test.db"))
-        await create_tables(engine)
+        await upgrade_database(engine)
         ws = MockWorkspace(tmp_path)
 
         result = await run_check(
@@ -110,7 +110,7 @@ class TestRunCheck:
 
     async def test_output_truncation(self, tmp_path: Path) -> None:
         engine = await get_engine(str(tmp_path / "test.db"))
-        await create_tables(engine)
+        await upgrade_database(engine)
         ws = MockWorkspace(tmp_path)
 
         # Generate > 64KB of output
@@ -121,7 +121,7 @@ class TestRunCheck:
 
     async def test_timeout_handling(self, tmp_path: Path) -> None:
         engine = await get_engine(str(tmp_path / "test.db"))
-        await create_tables(engine)
+        await upgrade_database(engine)
         ws = MockWorkspace(tmp_path)
 
         # Patch timeout to be short for test
@@ -138,7 +138,7 @@ class TestRunCheck:
 
     async def test_result_persisted(self, tmp_path: Path) -> None:
         engine = await get_engine(str(tmp_path / "test.db"))
-        await create_tables(engine)
+        await upgrade_database(engine)
         ws = MockWorkspace(tmp_path)
 
         await run_check(_check("echo persisted"), _repo(), "main", ws, engine)  # type: ignore[arg-type]
@@ -167,7 +167,7 @@ class TestRunningStateTracking:
         from grimoire.checks.engine import _running_checks, is_check_running
 
         engine = await get_engine(str(tmp_path / "track.db"))
-        await create_tables(engine)
+        await upgrade_database(engine)
 
         check = CheckDefinition(
             name="Tracker",
@@ -199,7 +199,7 @@ class TestRunCheckForAllTargets:
         from grimoire.checks.engine import run_check_for_all_targets
 
         engine = await get_engine(str(tmp_path / "list.db"))
-        await create_tables(engine)
+        await upgrade_database(engine)
         ws = MockWorkspace(tmp_path)
 
         check = CheckDefinition(
@@ -232,7 +232,7 @@ class TestRunCheckForAllTargets:
         from grimoire.checks.engine import run_check_for_all_targets
 
         engine = await get_engine(str(tmp_path / "script.db"))
-        await create_tables(engine)
+        await upgrade_database(engine)
         ws = MockWorkspace(tmp_path)
 
         check = CheckDefinition(

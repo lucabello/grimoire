@@ -34,6 +34,6 @@ Grimoire is a **self-hostable GitHub repository monitoring dashboard**. It aggre
 
     Understand how Grimoire works.
 
-    [:octicons-arrow-right-24: Architecture](concepts/architecture.md)
+    [:octicons-arrow-right-24: Architecture](explanation/architecture.md)
 
 </div>

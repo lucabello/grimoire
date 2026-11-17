@@ -47,6 +47,7 @@ Grimoire is designed to be friendly to the GitHub API rate limit:
 
 - **Conditional requests**: Uses ETags to avoid re-downloading unchanged data. After the initial fetch, most refreshes cost zero API calls.
 - **`per_page=100`**: Maximises data per request.
+- **Batched GraphQL for PRs**: The CI status of the pull requests that match a PR group is read with one GraphQL request per 20 PRs, from a rate-limit bucket separate from REST. The PRs themselves come from the pull request lists that are fetched anyway.
 - **Bounded concurrency**: A semaphore limits parallel API calls to 10.
 - **SQLite persistence**: On restart, cached data is loaded immediately. The dashboard is usable before the first refresh completes.
 
@@ -74,7 +75,7 @@ Grimoire uses SQLite via aiosqlite + SQLModel. The database stores:
 - Check and action results with full output logs
 - Toggle states (enabled/disabled per check/action)
 
-There are no migrations — the schema is recreated on startup if the database file doesn't exist. During development, delete `grimoire.db` after schema changes.
+The schema is migrated automatically at startup: a new database is created, and an existing one — including one from a release that predates migrations — is upgraded in place. Upgrading Grimoire never requires deleting `grimoire.db`; toggles, run history and the GitHub cache are kept.
 
 ## Security model
 

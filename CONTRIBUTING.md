@@ -21,7 +21,7 @@ cd grimoire
 just venv
 
 # Copy and edit the config
-cp config.yaml.example config.yaml
+cp examples/config.yaml config.yaml
 
 # Run in dev mode (auto-reload)
 just dev
@@ -36,6 +36,7 @@ just lint       # Run all linters (ruff, pyright, codespell, vulture)
 just test       # Run the test suite
 just coverage   # Run tests with coverage report
 just docs       # Serve documentation locally
+just migration "msg"  # Autogenerate a database revision after a model change
 ```
 
 ## Code Style

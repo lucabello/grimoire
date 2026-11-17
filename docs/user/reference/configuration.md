@@ -21,6 +21,8 @@ uv run grimoire --config-file config.mlops.yaml --port 8001
 
 `grimoire --help` lists all options (`--config-file`, `--port`, `--host`).
 
+In Docker, a `mise.toml` in the same directory as the config file declares extra tools for your checks. See [Install tools for your checks](../how-to/install-tools.md).
+
 ---
 
 ## `github` {: #github }
@@ -200,6 +202,69 @@ backlog:
 
 ---
 
+## `dashboard` {: #dashboard }
+
+**Optional.** Dashboard presentation options.
+
+### `workflow_groups`
+
+Split CI workflows into separate dashboard columns, for example to make release or nightly pipelines stand out. Each group has a `name` (the column header) and a list of `match` glob patterns tested against the workflow name. Matching is case-sensitive (`*release*` does not match `Release`). The first group that matches wins.
+
+```yaml
+dashboard:
+  workflow_groups:
+    - name: "Release"
+      match: ["*Release*", "*Publish*"]
+    - name: "Nightly"
+      match: ["nightly*"]
+  show_other: true
+```
+
+| Field | Default | Description |
+|-------|---------|-------------|
+| `workflow_groups` | `[]` | Ordered list of groups. Group names must be non-empty and unique, and `match` must not be empty. With `show_other: true`, no group may be named `Other`. |
+| `show_other` | `true` | Show a trailing **Other** column for workflows matching no group. Set to `false` to hide them. |
+
+Without `workflow_groups`, all workflows share a single **Workflows** column. The grouping also applies to the dashboard list view and the repository page.
+
+Hidden workflows (`show_other: false`) are only hidden from display: they still count toward a repository's health status. The matrix has one column per group, so keep the number of groups small.
+
+---
+
+## `prs` {: #prs }
+
+**Optional.** Named groups of the open pull requests of your tracked repositories (including the ones resolved from teams), shown on the **PRs** page with their CI status, for example the PRs opened by Renovate, Dependabot or a bot of your own. The groups are also served by the [REST API](api.md#prs).
+
+```yaml
+prs:
+  groups:
+    - name: "Maintenance"
+      authors: ["app/renovate", "app/dependabot", "my-team-bot"]
+    - name: "alice"
+      authors: ["alice"]
+      draft: false
+      repos: ["org-name/*"]
+```
+
+| Field | Description |
+|-------|-------------|
+| `name` | Required, non-blank, unique among the groups. |
+| `authors` | PR authors. Case is ignored, and so are a leading `app/` and a trailing `[bot]`: `app/renovate` matches the PRs of `renovate[bot]`. |
+| `labels` | PR labels (case-insensitive, exact name). |
+| `title_words` | Words or phrases that must appear in the PR title (case-insensitive substring, not a regular expression). |
+| `draft` | `true` for draft PRs only, `false` for PRs ready for review. |
+| `base` | Target branch of the PR. |
+| `repos` | Optional. Case-sensitive glob patterns on the tracked repository full names (`org-name/*`). Default: all tracked repositories. |
+
+At least one of `authors`, `labels`, `title_words`, `draft` or `base` is required, and list entries must not be blank. Several values in one list are alternatives (any author, any label, any word); different fields must all match. A PR that matches several groups is listed in each of them.
+
+Grimoire reads the PRs from the pull request lists it already fetches for the dashboard, so they cost no additional API request. The CI, review and merge state of the PRs that match a group is read with one [GraphQL](https://docs.github.com/en/graphql) request per 20 PRs, using the same token. That uses GitHub's separate GraphQL rate limit (one point per request) and nothing when no group is configured. If GitHub cannot answer, the PRs are still listed (with their last known state, if any) and the page shows a warning.
+
+!!! note "Pending CI"
+    The CI badge shows the combined state GitHub reports for the PR's latest commit. A Renovate PR that waits for a `stability-days` check is pending until that delay passes.
+
+---
+
 ## `refresh_schedule` {: #refresh-schedule }
 
 **Optional.** Cron expression controlling how often Grimoire fetches fresh data from GitHub and runs checks with no custom schedule.
@@ -286,6 +351,12 @@ backlog:
     - repos:
         - "org/critical-repo"
       weight: 5.0
+
+prs:
+  groups:
+    - name: "Maintenance"
+      authors: ["app/renovate", "app/dependabot"]
+      repos: ["org-name/*"]
 
 refresh_schedule: "*/5 * * * *"
 

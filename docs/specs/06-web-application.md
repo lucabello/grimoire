@@ -1,6 +1,6 @@
-# Module 6: Web Application (Dashboard, Repo Detail, Actions, Checks, Backlog Pages)
+# Module 6: Web Application (Dashboard, Repo Detail, Actions, Checks, Backlog, PRs Pages)
 
-Build the HTMX-powered web frontend with five pages: dashboard overview, individual repository detail, actions management, checks management, and backlog prioritization.
+Build the HTMX-powered web frontend with six pages: dashboard overview, individual repository detail, actions management, checks management, backlog prioritization, and the PRs of configured groups.
 
 **Dependencies:** Modules 1–5 (all backend services).
 
@@ -10,7 +10,7 @@ Build the HTMX-powered web frontend with five pages: dashboard overview, individ
 
 Update `create_app()` to:
 
-- Mount all API routers (checks, actions, repos).
+- Mount all API routers (checks, actions, repos, prs).
 - Mount web router for HTML pages.
 - Mount static files at `/static`.
 - Set up Jinja2 template environment.
@@ -25,7 +25,7 @@ async def lifespan(app: FastAPI):
     # Startup
     config = load_config()
     engine = await get_engine(config.database_path)
-    await create_tables(engine)
+    await upgrade_database(engine)  # Alembic: create or migrate the schema
     # Load cached data from DB (instant, no API calls)
     # Initialize GitHub client, workspace manager, scheduler
     # Start background refresh task
@@ -42,6 +42,7 @@ def create_app() -> FastAPI:
     # Mount routers
     app.include_router(checks_router, prefix="/api")
     app.include_router(actions_router, prefix="/api")
+    app.include_router(prs_router, prefix="/api")
     app.include_router(web_router)
     app.mount("/static", StaticFiles(directory="..."), name="static")
 
@@ -184,6 +185,15 @@ Icons (FontAwesome 6):
 Each icon represents one workflow. Hover shows the workflow name. Click links to the GitHub run.
 
 When a repo has a single observed branch, omit the branch label for compactness.
+
+### Workflow groups (columns)
+
+`dashboard.workflow_groups` (spec 1.2) splits workflows into named columns. The grouping is computed at render time by `group_workflows()` in `web/router.py` (no data model or DB change); `RepoViewModel.workflow_columns` holds one `WorkflowColumn` per column.
+
+- No groups configured: a single "Workflows" column (default behaviour).
+- Groups configured: one column per group, in config order, plus a trailing "Other" column unless `show_other` is false (then unmatched workflows are hidden). The first group whose glob matches the workflow name wins (case-sensitive, `fnmatchcase`). Hidden workflows still count toward repo health status.
+- Matrix view: one `<th>`/`<td>` per column; every column is always rendered so cells align across repos.
+- List view and repo detail page: one labelled workflow block per non-empty column (the label is omitted on the repo page when there is a single column).
 
 ### Check visualization (compact)
 
@@ -476,6 +486,7 @@ Individual items can be copied via the per-row clipboard button.
 - `repository.html` extends `base.html`.
 - `actions.html` extends `base.html`.
 - `checks.html` extends `base.html`.
+- `prs.html` extends `base.html`; it includes `partials/prs_groups.html`, which the partial endpoint also renders.
 
 ## 6.9 — HTMX Partial Endpoints
 
@@ -494,6 +505,7 @@ These endpoints return HTML fragments (not full pages) for HTMX to swap in:
 | `GET /partials/check-output/{result_id}` | Expanded check output text |
 | `GET /partials/check-results/{slug}?sort=...&dir=...` | Per-check results grouped by run (collapsible) |
 | `GET /partials/backlog-items` | Filtered/sorted backlog item list |
+| `GET /partials/prs?sort=...&ci=...&search=...&group=...` | PR summary chips and group sections; also swaps the "last updated" line and the form's hidden `ci` input out of band |
 | `GET /partials/refresh-status` | Refresh button (idle/running with progress) |
 | `POST /partials/refresh-trigger` | Starts refresh, returns running-state button |
 | `GET /partials/check-run-status/{slug}` | Check run button with progress counter |
@@ -515,6 +527,75 @@ Every section must render a helpful message when there's no data:
 | No action results yet | Per-action "Results" button hidden; inline text shows "no runs yet". |
 | Repo has warnings | Amber ⚠ with hover text; never an empty row. |
 | No backlog items | Backlog page shows "No issues found — all clear! 🎉" |
+| No PR groups | PRs page shows "No PR groups configured" and a `prs.groups` snippet. |
+| PR groups but no data yet | PRs page shows "Waiting for the first refresh" (the refresh button shows the progress; the list loads when it completes). |
+| Group with no matching PR | The group section says "No open PRs match this group 🎉". |
+| Filters match nothing | The group section says "No PRs match the current filters." |
+| CI status could not be fetched | One amber line with the warning count; the rows keep their last known state. |
+
+## 6.11 — PRs Page and API
+
+**Files:** `src/grimoire/prs.py` (matcher, grouping, page filters, state, API router), `src/grimoire/web/router.py` (page and partial), `templates/prs.html`, `templates/partials/prs_groups.html`
+**Config:** `prs.groups` (spec 1.2). **Nav entry:** "PRs" after "Actions".
+
+The PRs page answers "which PRs of kind X are open across my repositories, and are they green?" (Renovate and Dependabot PRs, a bot's PRs, one person's PRs, …). Grimoire already fetches the open pull requests of every tracked repository to count the stale ones; it now keeps them (spec 2.2) and applies the groups to them when a page or the API reads the cache. Changing a group needs a restart but no refetch.
+
+### Matching
+
+`matches(group, repo_full_name, pr) -> bool` is a pure function. Values of one list matcher are alternatives, different matchers are ANDed, and a group matches only the PRs of the repositories in its scope.
+
+| Matcher | Rule |
+|---|---|
+| `repos` | `fnmatchcase` on the tracked full name; empty = every tracked repository. |
+| `authors` | Both sides are normalised: lower-case, a leading `app/` removed, a trailing `[bot]` removed. `app/renovate` therefore matches the login `renovate[bot]` that the REST pulls list reports, and `observability-noctua-bot` (a regular user account) matches itself. |
+| `labels` | Case-insensitive exact label name. |
+| `title_words` | Case-insensitive substring of the title (GitHub's search matched words; this is a deliberate change). |
+| `draft` | Boolean equality. |
+| `base` | Equality with the PR's base branch. |
+
+A PR that matches several groups appears in each of them (workflow groups on the dashboard, where the first match wins, are a different feature).
+
+Real payloads checked on 2026-11-06 against `canonical/*` repositories: the pulls list reports `dependabot[bot]` and `renovate[bot]` (`user.type` is `Bot`) and `observability-noctua-bot` as `user.type` `User`.
+
+### CI, review and merge state
+
+The pulls list has no CI state. For the PRs that match a group, `refresh_all_stats` asks GraphQL after the per-repository fetches (spec 2.1: `get_pull_request_rollups`, batches of 20, sequential). With no groups configured no GraphQL request is made. A GraphQL failure leaves the list intact: the PRs keep their previous state when their head commit is unchanged, have none otherwise, and the repository gets a `Could not fetch CI status for …` warning. The CI badge shows the GitHub rollup, so a Renovate PR waiting out `renovate/stability-days` shows as pending until the delay passes.
+
+### Page
+
+**Route:** `GET /prs?sort=&ci=&search=&group=` (unknown values fall back to the defaults). Query values only filter what is displayed.
+
+- **Header:** "PRs", "Last updated X ago" and the refresh button (`partials/refresh_button.html`); the list reloads on `refreshCompleted`.
+- **Controls:** a debounced search box (repository, title or author substring), a sort select and, with several groups, a group select. They form one HTMX form that swaps `#prs-content` from `GET /partials/prs`.
+- **Summary chips:** total, failing, pending, passing, no checks (and unknown, when some PRs have no CI data), counted over the distinct PRs of the shown groups after search and group selection. A chip sets the `ci` filter; clicking the active chip clears it.
+- **Group sections:** one `<details open>` per group in config order. The summary shows the name and "N PRs in M repos · X failing · Y pending".
+- **Row:** CI badge (check, xmark, clock or minus icon linking to `{pr}/checks`, tooltip "CI … (as of …)"; a failing row has a left `border-error` accent) · repository (links to `/repo/{owner}/{name}`) · `#number title` opening GitHub in a new tab (`rel="noopener noreferrer"`) with draft, auto-merge and label badges, the head branch and the base branch when it differs from the repository default · author (normalised, robot icon when the login ends in `[bot]`) · review and merge badges · age (created, absolute time in a tooltip) · last update.
+- **Review and merge badges:** `approved`, `changes requested`, `review required`; merge `conflicts` (`dirty`), `behind`, `blocked` (hidden when the review state already explains it) and `ready` (`clean`). A merge state of `unknown` shows nothing.
+- **Sorting:** `attention` (default: failure, pending, no checks or unknown, then success; oldest first within each), `repo`, `age` (oldest first), `updated` (most recent first).
+- **Tables** scroll horizontally on small screens. Empty states: see 6.10.
+
+### API
+
+`GET /api/prs` reads the in-memory cache only (no GitHub calls) and returns the groups in config order:
+
+```json
+{
+  "last_refresh": "2026-11-06T21:05:00Z",
+  "groups": [{
+    "name": "Maintenance",
+    "total": 12, "failing": 3, "pending": 1, "passing": 7, "no_checks": 1,
+    "pull_requests": [{
+      "repo": "canonical/operator", "number": 12, "title": "…", "url": "https://github.com/canonical/operator/pull/12",
+      "author": "renovate[bot]", "created_at": "…", "updated_at": "…", "draft": false, "labels": ["dependencies"],
+      "base": "main", "head_ref": "renovate/…", "head_sha": "…", "auto_merge": false,
+      "ci": "failure", "ci_url": "https://github.com/canonical/operator/pull/12/checks",
+      "review_decision": "review_required", "merge_state": "blocked", "ci_checked_at": "…"
+    }]
+  }]
+}
+```
+
+`author` is the raw login. `ci` (`success`, `failure`, `pending`, `none`), `review_decision`, `merge_state` and `ci_checked_at` are `null` when GraphQL has not reported them. A PR matching several groups appears in each. There are no query filters: consumers filter the list themselves.
 
 ## Acceptance Criteria
 
@@ -538,6 +619,9 @@ Every section must render a helpful message when there's no data:
 - [ ] Backlog export renders correct Markdown with tier grouping
 - [ ] Backlog per-item copy-to-clipboard works
 - [ ] Backlog filters by category and repo work correctly
+- [ ] A group with `authors: ["app/renovate", "app/dependabot", "observability-noctua-bot"]` matches the PRs of `renovate[bot]`, `dependabot[bot]` and `observability-noctua-bot` and no others
+- [ ] PRs page shows one section per group with CI badge, repository, linked title, labels, draft and auto-merge badges, author, review/merge badges, age and last update; chips, search, `ci` filter, sort and group selection work through HTMX; all empty states render
+- [ ] `GET /api/prs` returns the groups with their PRs without GitHub calls; `/maintenance` and `/api/maintenance/groups` are gone
 - [ ] HTMX partial updates work without full page reloads
 - [ ] Pages render correctly in both light and dark mode
 - [ ] Pages are responsive (usable on tablet/mobile, scrollable tables)

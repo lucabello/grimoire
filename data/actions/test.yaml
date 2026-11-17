@@ -1,6 +1,0 @@
-name: "Test"
-description: "Runs pwd in each repository workspace to verify workspace setup"
-targets:
-  regex: ".*"
-script: |
-  pwd

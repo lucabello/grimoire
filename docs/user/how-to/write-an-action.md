@@ -63,7 +63,7 @@ Action scripts execute inside the cloned repository directory. Available environ
 | `DEFAULT_BRANCH` | Default branch of the repository |
 | `GH_TOKEN` / `GITHUB_TOKEN` | GitHub token (for `gh` CLI) |
 
-The `gh` CLI is available inside the Docker container.
+The `gh` CLI is available inside the Docker container. To add other tools (`jq`, `shellcheck`, ...), see [Install tools for your checks](install-tools.md).
 
 Scripts have a **10-minute timeout** and output is capped at 64 KB.
 
