@@ -85,6 +85,12 @@ The endpoint reads Grimoire's cache: it makes no GitHub request. It returns the 
 - A PR that matches several groups is listed in each of them.
 - There are no query parameters: filter the list on your side.
 
+## Cross-site requests
+
+Requests that change state (`POST`, `PUT`, `PATCH`, `DELETE`) are rejected with `403` when a browser reports that they come from another site: a `Sec-Fetch-Site` header other than `same-origin` or `none`, or, when that header is missing, an `Origin` header whose host is not the one the request was sent to. This stops a web page you visit from triggering checks or actions on a Grimoire that only your network can reach.
+
+Requests without these headers, such as `curl` or a script, are not affected, so API automation keeps working. If a reverse proxy rewrites the `Host` header, browsers that do not send `Sec-Fetch-Site` are rejected: make the proxy pass the original `Host` (see [Deploy Grimoire](../how-to/deploy.md#reverse-proxy)).
+
 ## Health
 
 | Method | Path | Description |

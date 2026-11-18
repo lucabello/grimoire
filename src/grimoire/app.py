@@ -55,6 +55,7 @@ from grimoire.observability.metrics import DATA_REFRESH_DURATION, update_repo_me
 from grimoire.observability.metrics import router as metrics_router
 from grimoire.prs import router as prs_router
 from grimoire.prs import set_prs_config
+from grimoire.security import cross_site_guard
 from grimoire.web.router import router as web_router
 from grimoire.web.router import (
     set_backlog_config,
@@ -298,6 +299,8 @@ def create_app() -> FastAPI:
         version=VERSION,
         lifespan=lifespan,
     )
+
+    app.middleware("http")(cross_site_guard)
 
     # API routers
     app.include_router(repos_router, prefix="/api")
