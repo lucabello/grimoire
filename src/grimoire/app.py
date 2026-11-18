@@ -60,9 +60,9 @@ from grimoire.observability.metrics import (
 from grimoire.observability.metrics import router as metrics_router
 from grimoire.prs import router as prs_router
 from grimoire.prs import set_prs_config
+from grimoire.security import cross_site_guard
 from grimoire.spaces import router as spaces_router
 from grimoire.spaces import set_spaces_config, validate_definition_spaces
-from grimoire.security import cross_site_guard
 from grimoire.web.router import router as web_router
 from grimoire.web.router import (
     set_backlog_config,
