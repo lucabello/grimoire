@@ -10,7 +10,7 @@ from datetime import UTC, datetime
 from fastapi import APIRouter, Response
 from prometheus_client import CONTENT_TYPE_LATEST, Counter, Gauge, Histogram, generate_latest
 
-from grimoire.models import RepositoryStats
+from grimoire.models import RepositoryStats, TrackedRepository
 
 # ---------------------------------------------------------------------------
 # Repository health gauges
@@ -31,6 +31,11 @@ WORKFLOW_FAILURES = Gauge(
     "grimoire_workflow_failures_total",
     "Number of failing workflows",
     ["repo"],
+)
+SPACE_INFO = Gauge(
+    "grimoire_repository_space_info",
+    "Space membership of a repository (always 1; join on repo to label other series)",
+    ["repo", "space"],
 )
 CHECK_STATUS = Gauge(
     "grimoire_check_status",
@@ -155,6 +160,18 @@ def update_repo_metrics(stats_list: list[RepositoryStats]) -> None:
         for created_at in stats.pr_created_dates:
             age = (now - created_at).total_seconds()
             PR_AGE_DISTRIBUTION.labels(repo=repo).observe(age)
+
+
+def update_space_metrics(repos: list[TrackedRepository]) -> None:
+    """Publish one ``grimoire_repository_space_info`` series per (repo, space) membership.
+
+    Repos without a space get no series. The previous label sets are cleared first so that repos
+    removed from a space disappear.
+    """
+    SPACE_INFO.clear()
+    for repo in repos:
+        for space in repo.spaces:
+            SPACE_INFO.labels(repo=repo.full_name, space=space).set(1)
 
 
 def update_check_metrics(

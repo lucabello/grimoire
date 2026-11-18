@@ -20,6 +20,30 @@ All Prometheus metrics exposed at `GET /metrics`. Scraped using standard Prometh
 | `grimoire_oldest_issue_age_seconds` | Gauge | `repo` | Age of the oldest open issue in seconds |
 | `grimoire_oldest_pr_age_seconds` | Gauge | `repo` | Age of the oldest open pull request in seconds |
 
+## Spaces
+
+| Metric | Type | Labels | Description |
+|--------|------|--------|-------------|
+| `grimoire_repository_space_info` | Gauge | `repo`, `space` | Space membership of a repository. Always `1`; one series per (repo, space) membership, so a repository in two spaces has two series |
+
+Repositories that belong to no space (listed only in the top-level `repositories:`) have **no series**. Series of repositories removed from a space disappear on the next update. The existing per-repository series do not carry a `space` label: join on `repo` to add it.
+
+**Join example** (open issues per space; a repository in two spaces counts once in each):
+
+```promql
+sum by (space) (
+  grimoire_open_issues_total * on(repo) group_right() grimoire_repository_space_info
+)
+```
+
+Use `group_right`, not `group_left(space)`: a repository in several spaces has several `grimoire_repository_space_info` series, and Prometheus rejects a `group_left` join whose right-hand side is not unique per `repo` ("many-to-many matching not allowed"). With `group_right`, the info series is the many side and the result carries its `repo` and `space` labels. Both queries on this page were checked with `promtool test rules`.
+
+Repositories without a space are not in the join result; to list them, use `unless`:
+
+```promql
+grimoire_open_issues_total unless on(repo) grimoire_repository_space_info
+```
+
 ## Issue/PR Age Distribution
 
 | Metric | Type | Labels | Description |
