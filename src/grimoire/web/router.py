@@ -10,7 +10,7 @@ from importlib.metadata import version
 from pathlib import Path
 from typing import Any
 
-from fastapi import APIRouter, BackgroundTasks, HTTPException, Request
+from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, Request
 from fastapi.responses import HTMLResponse, PlainTextResponse
 from fastapi.templating import Jinja2Templates
 from sqlalchemy import text
@@ -33,6 +33,7 @@ from grimoire.prs import (
     search_results,
     sort_pull_requests,
 )
+from grimoire.spaces import ALL_SPACES, SpaceSelection
 from grimoire.targeting import TargetSpec
 from grimoire.web.backlog import (
     BacklogItem,
@@ -41,7 +42,7 @@ from grimoire.web.backlog import (
     group_by_repo,
     group_by_type,
 )
-from grimoire.web.spaces import space_context
+from grimoire.web.spaces import html_space_selection, space_context
 
 router = APIRouter(tags=["web"])
 
@@ -180,6 +181,7 @@ class RepoViewModel:
     workflows_by_branch: dict[str, list[WorkflowStatus]]
     checks_by_branch: dict[str, list[dict[str, Any]]]
     workflow_columns: list[WorkflowColumn] = field(default_factory=list)
+    spaces: list[str] = field(default_factory=list)
     fetched_at: datetime | None = None
     last_commit_at: datetime | None = None
     total_branches: int = 0
@@ -512,9 +514,15 @@ def _build_checks_for_repo(
 
 
 async def _build_repo_viewmodels(
-    include_checks: bool = True, include_stale: bool = True
+    include_checks: bool = True,
+    include_stale: bool = True,
+    selection: SpaceSelection = ALL_SPACES,
 ) -> list[RepoViewModel]:
-    """Build view models from the in-memory GitHub cache + checks state."""
+    """Build view models from the in-memory GitHub cache + checks state.
+
+    Only repos in the space *selection* are returned, with the workflows that the selected
+    spaces' filters allow.
+    """
     from grimoire.github.router import _cache, _repos
 
     check_targets, results_by_key = await _load_check_context(_repos)
@@ -522,18 +530,22 @@ async def _build_repo_viewmodels(
     viewmodels: list[RepoViewModel] = []
     for full_name, stats in _cache.items():
         repo = _repos.get(full_name)
-        if repo is None:
+        if repo is None or not selection.includes(repo):
             continue
 
         branches = repo.branches or [stats.default_branch]
 
+        visible_workflows = [
+            wf for wf in stats.workflows if selection.workflow_visible(repo, wf.name)
+        ]
+
         # Group workflows by branch
         workflows_by_branch: dict[str, list[WorkflowStatus]] = {}
-        for wf in stats.workflows:
+        for wf in visible_workflows:
             workflows_by_branch.setdefault(wf.branch, []).append(wf)
 
         # Count workflow failures
-        workflow_failures = sum(1 for w in stats.workflows if w.status == "failure")
+        workflow_failures = sum(1 for w in visible_workflows if w.status == "failure")
 
         # Build check results
         checks_by_branch, check_failures, check_warnings = _build_checks_for_repo(
@@ -545,6 +557,7 @@ async def _build_repo_viewmodels(
                 full_name=full_name,
                 branches=branches,
                 source=repo.source,
+                spaces=repo.spaces,
                 open_issues=stats.open_issues,
                 stale_issues=stats.stale_issues,
                 open_prs=stats.open_pull_requests,
@@ -555,7 +568,7 @@ async def _build_repo_viewmodels(
                 warnings=stats.warnings,
                 workflows_by_branch=workflows_by_branch,
                 checks_by_branch=checks_by_branch,
-                workflow_columns=group_workflows(stats.workflows),
+                workflow_columns=group_workflows(visible_workflows),
                 fetched_at=stats.fetched_at,
                 last_commit_at=stats.last_commit_at,
                 total_branches=stats.total_branches,
@@ -578,15 +591,16 @@ async def dashboard(
     dir: str = "asc",
     include_checks: bool = True,
     include_stale: bool = True,
+    selection: SpaceSelection = Depends(html_space_selection),
 ) -> HTMLResponse:
-    """Dashboard page — lists all tracked repositories."""
+    """Dashboard page — lists the tracked repositories in the space selection."""
     from grimoire.github.router import _last_refresh
     from grimoire.github.service import get_refresh_progress, is_refresh_running
 
     refresh_running = is_refresh_running()
     refresh_progress = get_refresh_progress()
 
-    repos = await _build_repo_viewmodels(include_checks, include_stale)
+    repos = await _build_repo_viewmodels(include_checks, include_stale, selection)
 
     # Initial loading state: no repos yet and a refresh is in progress
     if not repos and refresh_running:
@@ -915,10 +929,14 @@ async def prs_partial(
 
 
 async def _build_sorted_repos(
-    sort: str, direction: str, include_checks: bool = True, include_stale: bool = True
+    sort: str,
+    direction: str,
+    include_checks: bool = True,
+    include_stale: bool = True,
+    selection: SpaceSelection = ALL_SPACES,
 ) -> list[RepoViewModel]:
     """Build and sort repo view models (shared by all dashboard partials)."""
-    repos = await _build_repo_viewmodels(include_checks, include_stale)
+    repos = await _build_repo_viewmodels(include_checks, include_stale, selection)
     return _sort_repos(repos, sort, direction)
 
 
@@ -929,9 +947,10 @@ async def dashboard_matrix_partial(
     dir: str = "asc",
     include_checks: bool = True,
     include_stale: bool = True,
+    selection: SpaceSelection = Depends(html_space_selection),
 ) -> HTMLResponse:
     """Return the compact matrix view for HTMX swap."""
-    repos = await _build_sorted_repos(sort, dir, include_checks, include_stale)
+    repos = await _build_sorted_repos(sort, dir, include_checks, include_stale, selection)
     return templates.TemplateResponse(
         request,
         "partials/dashboard_matrix.html",
@@ -955,9 +974,10 @@ async def dashboard_list_partial(
     dir: str = "asc",
     include_checks: bool = True,
     include_stale: bool = True,
+    selection: SpaceSelection = Depends(html_space_selection),
 ) -> HTMLResponse:
     """Return the compact list view for HTMX swap."""
-    repos = await _build_sorted_repos(sort, dir, include_checks, include_stale)
+    repos = await _build_sorted_repos(sort, dir, include_checks, include_stale, selection)
     return templates.TemplateResponse(
         request,
         "partials/dashboard_list.html",
@@ -974,9 +994,10 @@ async def dashboard_stats_partial(
     request: Request,
     include_checks: bool = True,
     include_stale: bool = True,
+    selection: SpaceSelection = Depends(html_space_selection),
 ) -> HTMLResponse:
     """Return the stats bar for HTMX swap, respecting the health-status toggle."""
-    repos = await _build_repo_viewmodels(include_checks, include_stale)
+    repos = await _build_repo_viewmodels(include_checks, include_stale, selection)
     totals = _compute_totals(repos)
     return templates.TemplateResponse(
         request,

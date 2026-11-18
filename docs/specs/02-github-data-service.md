@@ -202,7 +202,7 @@ Expose cached repository data and a manual refresh trigger via REST endpoints.
 
 | Method | Path | Description |
 |--------|------|-------------|
-| `GET` | `/api/repos` | List all tracked repos with latest cached stats |
+| `GET` | `/api/repos` | List tracked repos with latest cached stats; optional `?spaces=a,b` (ids, `_unassigned` allowed) keeps only repos in those spaces (never the cookie) and counts `workflow_failures` over the workflows those spaces' filters allow |
 | `GET` | `/api/repos/{owner}/{name}` | Detailed stats for a single repo (issues, PRs, workflows, checks) |
 | `POST` | `/api/refresh` | Trigger an immediate data refresh. Returns 202 Accepted; refresh runs as a background task |
 | `GET` | `/api/refresh/status` | Returns current refresh progress: `{ running, completed, total }` |
@@ -306,7 +306,7 @@ class RefreshResponse(BaseModel):
 
 ## Acceptance Criteria
 
-- [ ] `GET /api/repos` returns all tracked repos with correct cached stats
+- [ ] `GET /api/repos` returns all tracked repos with correct cached stats; `?spaces=` filters them and the cookie is ignored
 - [ ] `GET /api/repos/{owner}/{name}` returns detailed info including stale items, workflows, checks
 - [ ] `GET /api/repos/{owner}/{name}` returns 404 for untracked repos
 - [ ] `POST /api/refresh` returns 202 and triggers a background refresh

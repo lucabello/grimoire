@@ -128,6 +128,14 @@ Returns the `partials/loading_progress.html` template with current `RefreshProgr
 | **Workflows** | Compact badge grid (see below) | ✓ (by number of failures) |
 | **Checks** | Compact badge grid (see below) | ✓ (by number of failures) |
 
+### Space filter
+
+The page, `GET /partials/dashboard-matrix`, `/partials/dashboard-list` and `/partials/dashboard-stats` read the HTML space selection (6.12) and `_build_repo_viewmodels(include_checks, include_stale, selection)` applies it:
+
+- Only repos with `selection.includes(repo)` are shown; the stats bar counts only those repos.
+- Workflow cells use `selection.workflow_visible(repo, workflow_name)`, so an overlapping repo shows the union of the filters of the selected spaces (only that space's workflows for a single space; every membership for All). Workflow group columns stay global and are not hidden when empty.
+- Rows show `space_badges(repo)` (small colored dot and name per space) when spaces are configured; `RepoViewModel.spaces` carries the ids.
+
 ### View Switcher
 
 The dashboard supports three view modes, selectable via a button group next to the sort controls. The user's preference is persisted in `localStorage` (key: `grimoire-view`). Default: Grid.
@@ -616,6 +624,7 @@ HTML pages and HTMX partials filter by the user's space selection; the JSON API 
 ## Acceptance Criteria
 
 - [ ] Dashboard renders all tracked repos with correct stats
+- [ ] The dashboard, its partials and the stats bar show only the repos of the space selection; an overlapping repo shows the union of the selected spaces' workflows
 - [ ] Sorting works for all columns (name, issues, stale issues, PRs, stale PRs, workflow failures, check failures)
 - [ ] Multi-branch repos show per-branch workflow/check status in a single row
 - [ ] Per-repo warnings display as amber indicators with hover text
