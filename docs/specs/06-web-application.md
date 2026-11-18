@@ -592,9 +592,16 @@ The pulls list has no CI state. For the PRs that match a group, `refresh_all_sta
 - **Sorting:** `attention` (default: failure, pending, no checks or unknown, then success; oldest first within each), `repo`, `age` (oldest first), `updated` (most recent first).
 - **Tables** scroll horizontally on small screens. Empty states: see 6.10.
 
+### Space filter
+
+`GET /prs` and `GET /partials/prs` use the HTML selection (6.12). `stats_in_selection(stats, repos, selection)` (`prs.py`) keeps the stats of repos with `selection.includes(repo)` before `build_group_results`, so a PR is shown only if its repo is in the selection and the group matchers (including a group's `repos` scope) still apply on top. PR groups themselves stay global.
+
+- Under a narrower selection, groups left with no PRs are hidden, including from the group select; when none is left the page says "No open PRs in the selected spaces match any group". Under All, an empty group still says "No open PRs match this group 🎉". The "No PR groups configured" screen depends on the configuration only (`has_groups`).
+- The repository cell shows `space_badges` when spaces are configured.
+
 ### API
 
-`GET /api/prs` reads the in-memory cache only (no GitHub calls) and returns the groups in config order:
+`GET /api/prs` reads the in-memory cache only (no GitHub calls) and returns the groups in config order. The optional `?spaces=a,b` (`api_space_selection`, never the cookie) keeps only the PRs of repos in those spaces; every group is still returned, with `total: 0` and an empty `pull_requests` list when nothing is left:
 
 ```json
 {
@@ -659,6 +666,7 @@ HTML pages and HTMX partials filter by the user's space selection; the JSON API 
 - [ ] The backlog page, partial and export only list items of the selected spaces' repos (and only the workflows the selected spaces allow); scores are unchanged; the export honours `?spaces=` and ignores the cookie
 - [ ] A group with `authors: ["app/renovate", "app/dependabot", "observability-noctua-bot"]` matches the PRs of `renovate[bot]`, `dependabot[bot]` and `observability-noctua-bot` and no others
 - [ ] PRs page shows one section per group with CI badge, repository, linked title, labels, draft and auto-merge badges, author, review/merge badges, age and last update; chips, search, `ci` filter, sort and group selection work through HTMX; all empty states render
+- [ ] The PRs page and partial show only the PRs of the selected spaces' repos and hide groups left empty; `GET /api/prs?spaces=` filters the PRs, keeps every group and ignores the cookie
 - [ ] `GET /api/prs` returns the groups with their PRs without GitHub calls; `/maintenance` and `/api/maintenance/groups` are gone
 - [ ] `?spaces=` beats the `grimoire_spaces` cookie on HTML pages and is saved to it (Max-Age 1 year, SameSite=Lax, Path = root_path); unknown ids are dropped; `/api/*` ignores the cookie; `GET /api/spaces` lists the spaces, plus Unassigned only when unassigned repos exist
 - [ ] The navbar selector is absent without spaces; labels for All / one / several are right; only, All and None work; the selection survives reload and browser restart; it works under `--root-path`

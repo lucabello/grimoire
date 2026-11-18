@@ -12,11 +12,12 @@ from dataclasses import dataclass
 from datetime import datetime
 from fnmatch import fnmatchcase
 
-from fastapi import APIRouter
+from fastapi import APIRouter, Depends
 from pydantic import BaseModel
 
 from grimoire.config import PRGroup, PRsConfig
-from grimoire.models import OpenPullRequest, RepositoryStats
+from grimoire.models import OpenPullRequest, RepositoryStats, TrackedRepository
+from grimoire.spaces import SpaceSelection, api_space_selection
 
 # Start of the per-repository warning added when GraphQL could not report CI status
 CI_WARNING_PREFIX = "Could not fetch CI status"
@@ -102,6 +103,21 @@ class GroupResult:
     @property
     def repo_count(self) -> int:
         return len({item.repo for item in self.pull_requests})
+
+
+def stats_in_selection(
+    stats_by_repo: Mapping[str, RepositoryStats],
+    repos: Mapping[str, TrackedRepository],
+    selection: SpaceSelection,
+) -> Mapping[str, RepositoryStats]:
+    """The stats of the repos in the space *selection* (group matchers still apply on top)."""
+    if selection.ids is None:
+        return stats_by_repo
+    return {
+        name: stats
+        for name, stats in stats_by_repo.items()
+        if (repo := repos.get(name)) is not None and selection.includes(repo)
+    }
 
 
 def build_group_results(
@@ -285,11 +301,17 @@ router = APIRouter(tags=["prs"])
 
 
 @router.get("/prs", response_model=PRsResponse)
-async def list_prs() -> PRsResponse:
-    """Open pull requests of each configured group (from the cache; no GitHub calls)."""
-    from grimoire.github.router import _cache, _last_refresh
+async def list_prs(
+    selection: SpaceSelection = Depends(api_space_selection),
+) -> PRsResponse:
+    """Open pull requests of each configured group (from the cache; no GitHub calls).
 
-    results = build_group_results(_config, _cache)
+    ``?spaces=`` keeps only the PRs of repos in those spaces; every group is still returned,
+    with an empty list when nothing is left. The selection cookie is never read.
+    """
+    from grimoire.github.router import _cache, _last_refresh, _repos
+
+    results = build_group_results(_config, stats_in_selection(_cache, _repos, selection))
     return PRsResponse(
         last_refresh=_last_refresh,
         groups=[

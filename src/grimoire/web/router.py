@@ -34,6 +34,7 @@ from grimoire.prs import (
     normalize_author,
     search_results,
     sort_pull_requests,
+    stats_in_selection,
 )
 from grimoire.spaces import ALL_SPACES, SpaceSelection, api_space_selection
 from grimoire.targeting import TargetSpec
@@ -873,17 +874,26 @@ async def checks_page(
 # ---------------------------------------------------------------------------
 
 
-def _build_prs_context(sort: str, ci: str, search: str, group: str) -> dict[str, Any]:
-    """Template context of the PRs page and partial: groups filtered, sorted and counted."""
-    from grimoire.github.router import _cache, _last_refresh
+def _build_prs_context(
+    sort: str, ci: str, search: str, group: str, selection: SpaceSelection = ALL_SPACES
+) -> dict[str, Any]:
+    """Template context of the PRs page and partial: groups filtered, sorted and counted.
+
+    Only the PRs of repos in the space *selection* are used. Under a narrower selection the
+    groups left with no PRs are hidden (under All an empty group says so).
+    """
+    from grimoire.github.router import _cache, _last_refresh, _repos
 
     config = get_prs_config()
-    names = [g.name for g in config.groups]
     sort = sort if sort in PR_SORT_LABELS else "attention"
     ci = ci if ci in CI_FILTERS else ""
-    group = group if group in names else ""
 
-    all_results = build_group_results(config, _cache)
+    all_results = build_group_results(config, stats_in_selection(_cache, _repos, selection))
+    space_filtered = selection.ids is not None
+    if space_filtered:
+        all_results = [g for g in all_results if g.total]
+    names = [g.name for g in all_results] if space_filtered else [g.name for g in config.groups]
+    group = group if group in names else ""
     scoped = search_results([g for g in all_results if not group or g.name == group], search)
     shown = [
         GroupResult(g.name, sort_pull_requests(g.pull_requests, sort))
@@ -897,8 +907,11 @@ def _build_prs_context(sort: str, ci: str, search: str, group: str) -> dict[str,
         "groups": shown,
         "matched_totals": {g.name: g.total for g in all_results},
         "group_names": names,
+        "has_groups": bool(config.groups),
         "counts": distinct_ci_counts(scoped),
         "has_data": bool(_cache),
+        "no_space_matches": space_filtered and not all_results and bool(config.groups),
+        "repo_spaces": {name: repo.spaces for name, repo in _repos.items()},
         "ci_warnings": ci_warnings,
         "last_refresh": _last_refresh,
         "last_refresh_ago": _time_ago(_last_refresh) if _last_refresh else None,
@@ -919,12 +932,13 @@ async def prs_page(
     ci: str = "",
     search: str = "",
     group: str = "",
+    selection: SpaceSelection = Depends(html_space_selection),
 ) -> HTMLResponse:
     """PRs page — the open pull requests of each configured group with their CI state."""
     from grimoire.github.service import get_refresh_progress, is_refresh_running
 
     progress = get_refresh_progress()
-    context = _build_prs_context(sort, ci, search, group)
+    context = _build_prs_context(sort, ci, search, group, selection)
     context.update(
         running=is_refresh_running(),
         progress_completed=progress.completed if progress else 0,
@@ -941,9 +955,10 @@ async def prs_partial(
     ci: str = "",
     search: str = "",
     group: str = "",
+    selection: SpaceSelection = Depends(html_space_selection),
 ) -> HTMLResponse:
     """Return the filtered PR groups as an HTMX partial."""
-    context = _build_prs_context(sort, ci, search, group)
+    context = _build_prs_context(sort, ci, search, group, selection)
     context["oob"] = True
     return templates.TemplateResponse(request, "partials/prs_groups.html", context=context)
 
