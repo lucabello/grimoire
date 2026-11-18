@@ -363,6 +363,13 @@ def _result_repo_filter(selection: SpaceSelection) -> Callable[[str], bool]:
     return lambda name: name == GLOBAL_REPO or in_selection(name)
 
 
+def _has_checks() -> bool:
+    """True if any check is defined: without checks the dashboard has no Checks column."""
+    from grimoire.checks.router import _checks
+
+    return bool(_checks)
+
+
 def _compute_totals(repos: list[RepoViewModel]) -> DashboardTotals:
     totals = DashboardTotals(repos=len(repos))
     for r in repos:
@@ -649,6 +656,7 @@ async def dashboard(
             "include_stale": include_stale,
             "sort_labels": SORT_LABELS,
             "workflow_column_names": workflow_column_names(),
+            "has_checks": _has_checks(),
             "staleness": _staleness_config,
             "time_ago": _time_ago,
             "running": refresh_running,
@@ -998,6 +1006,7 @@ async def dashboard_matrix_partial(
             "include_checks": include_checks,
             "include_stale": include_stale,
             "workflow_column_names": workflow_column_names(),
+            "has_checks": _has_checks(),
             "staleness": _staleness_config,
             "time_ago": _time_ago,
         },

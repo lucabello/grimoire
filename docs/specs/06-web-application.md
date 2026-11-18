@@ -137,7 +137,7 @@ Returns the `partials/loading_progress.html` template with current `RefreshProgr
 | **Last Activity** | Time since last commit across observed branches, e.g., `3d ago` | ✓ (by last commit time) |
 | **Branches** | Total count + stale count with link to GitHub branches page | — |
 | **Workflows** | Compact badge grid (see below) | ✓ (by number of failures) |
-| **Checks** | Compact badge grid (see below) | ✓ (by number of failures) |
+| **Checks** | Compact badge grid (see below). The column (header and cells) is only rendered when at least one check is defined (`has_checks`), like the Checks stat above | ✓ (by number of failures) |
 
 ### Space filter
 
@@ -666,6 +666,7 @@ HTML pages and HTMX partials filter by the user's space selection; the JSON API 
 
 - [ ] Dashboard renders all tracked repos with correct stats
 - [ ] The dashboard, its partials and the stats bar show only the repos of the space selection; an overlapping repo shows the union of the selected spaces' workflows
+- [ ] The dashboard table has a Checks column only when at least one check is defined; header and rows always have the same number of cells
 - [ ] Sorting works for all columns (name, issues, stale issues, PRs, stale PRs, workflow failures, check failures)
 - [ ] Multi-branch repos show per-branch workflow/check status in a single row
 - [ ] Per-repo warnings display as amber indicators with hover text
