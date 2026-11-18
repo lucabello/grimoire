@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 import shutil
 import sqlite3
 from contextlib import closing
@@ -34,6 +35,9 @@ from tests.legacy_db import (
     revision_of,
     schema_snapshot,
 )
+
+# Third revision: adds `cached_open_pull_request`.
+OPEN_PULL_REQUESTS_REVISION = "99e5695a6b05"
 
 
 def model_drift(connection: Connection) -> list:
@@ -214,7 +218,10 @@ async def test_open_pull_requests_revision_purges_only_pulls_etags(tmp_path: Pat
         con.commit()
     before = read_all(db)
 
-    await upgrade_database(engine)
+    async with engine.begin() as conn:
+        await conn.run_sync(
+            lambda c: command.upgrade(alembic_config(c), OPEN_PULL_REQUESTS_REVISION)
+        )
 
     after = read_all(db)
     assert "cached_open_pull_request" in after
@@ -224,7 +231,7 @@ async def test_open_pull_requests_revision_purges_only_pulls_etags(tmp_path: Pat
     } == (set(pulls_keys))
     del before["cached_etag"], after["cached_etag"]
     assert after == before
-    assert revision_of(db) == head_revision()
+    assert revision_of(db) == OPEN_PULL_REQUESTS_REVISION
 
     async with engine.begin() as conn:
         await conn.run_sync(lambda c: command.downgrade(alembic_config(c), "-1"))
@@ -235,3 +242,72 @@ async def test_open_pull_requests_revision_purges_only_pulls_etags(tmp_path: Pat
     assert "cached_open_pull_request" not in downgraded
     del downgraded["cached_etag"]
     assert downgraded == before
+
+
+async def test_memberships_revision_preserves_workflow_filters_both_ways(tmp_path: Path) -> None:
+    """Legacy filters become one top-level membership; downgrading writes the first one back."""
+    db = tmp_path / "grimoire.db"
+    create_legacy_database(db)
+    engine = await get_engine(str(db))
+
+    def upgrade_to_previous(connection: Connection) -> None:
+        config = alembic_config(connection)
+        command.stamp(config, BASELINE_REVISION)
+        command.upgrade(config, OPEN_PULL_REQUESTS_REVISION)
+
+    async with engine.begin() as conn:
+        await conn.run_sync(upgrade_to_previous)
+    with closing(sqlite3.connect(db)) as con:
+        con.execute(
+            "UPDATE cached_repository SET workflow_include_json = '[\"CI\"]', "
+            "workflow_exclude_json = '[\"Nightly *\"]' WHERE full_name = 'owner/repo1'"
+        )
+        con.commit()
+        legacy_names = [r[0] for r in con.execute("SELECT full_name FROM cached_repository")]
+    assert legacy_names
+
+    await upgrade_database(engine)
+
+    assert revision_of(db) == head_revision()
+    cached = columns(db, "cached_repository")
+    assert "memberships_json" in cached
+    assert not {"workflow_include_json", "workflow_exclude_json"} & cached
+    with closing(sqlite3.connect(db)) as con:
+        rows = dict(con.execute("SELECT full_name, memberships_json FROM cached_repository"))
+    assert sorted(rows) == sorted(legacy_names)
+    assert json.loads(rows["owner/repo1"]) == [
+        {"space": None, "workflow_include": ["CI"], "workflow_exclude": ["Nightly *"]}
+    ]
+    others = [json.loads(v) for k, v in rows.items() if k != "owner/repo1"]
+    assert all(
+        m == [{"space": None, "workflow_include": [], "workflow_exclude": []}] for m in others
+    )
+
+    # A second space membership is lost on downgrade; the first one's filters are kept.
+    with closing(sqlite3.connect(db)) as con:
+        memberships = [
+            {"space": "a", "workflow_include": ["Lint"], "workflow_exclude": []},
+            {"space": None, "workflow_include": [], "workflow_exclude": ["X"]},
+        ]
+        con.execute(
+            "UPDATE cached_repository SET memberships_json = ? WHERE full_name = 'owner/repo1'",
+            (json.dumps(memberships),),
+        )
+        con.commit()
+
+    async with engine.begin() as conn:
+        await conn.run_sync(lambda c: command.downgrade(alembic_config(c), "-1"))
+
+    assert revision_of(db) == OPEN_PULL_REQUESTS_REVISION
+    assert "memberships_json" not in columns(db, "cached_repository")
+    with closing(sqlite3.connect(db)) as con:
+        legacy = con.execute(
+            "SELECT workflow_include_json, workflow_exclude_json FROM cached_repository "
+            "WHERE full_name = 'owner/repo1'"
+        ).fetchone()
+    assert legacy == ('["Lint"]', "[]")
+
+    # The downgraded database can be upgraded again.
+    await upgrade_database(engine)
+    await engine.dispose()
+    assert revision_of(db) == head_revision()

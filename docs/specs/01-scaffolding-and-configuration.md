@@ -198,10 +198,17 @@ def load_config(path: Path | None = None) -> GrimoireConfig:
 Pydantic models for domain concepts (not DB models — those come in 1.4):
 
 ```python
+class RepoMembership(BaseModel):
+    space: str | None = None        # None = top-level `repositories:` source
+    workflow_include: list[str] = []
+    workflow_exclude: list[str] = []
+
 class TrackedRepository(BaseModel):
     full_name: str          # "owner/repo"
     branches: list[str]     # branches to observe; empty = default branch only
-    source: str             # "static" | "team:org/team-name"
+    source: str             # "static" | "team:org/team-name" (first source that yielded it)
+    memberships: list[RepoMembership]  # one per configured source yielding the repo
+    # .spaces -> sorted non-None space ids; .allows_workflow(name) -> any membership allows it
 
 class WorkflowStatus(BaseModel):
     name: str

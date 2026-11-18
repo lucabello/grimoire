@@ -7,8 +7,34 @@ the application as the shared domain vocabulary. Database models live in ``datab
 from __future__ import annotations
 
 from datetime import datetime
+from fnmatch import fnmatch
 
 from pydantic import BaseModel
+
+
+def workflow_matches_filter(wf_name: str, include: list[str], exclude: list[str]) -> bool:
+    """Return True if the workflow should be tracked after applying filters.
+
+    * If *include* is non-empty, the name must match at least one include pattern.
+    * If *exclude* is non-empty, the name must NOT match any exclude pattern.
+    * Both use ``fnmatch`` glob matching (case-sensitive).
+    """
+    if include and not any(fnmatch(wf_name, pat) for pat in include):
+        return False
+    if exclude and any(fnmatch(wf_name, pat) for pat in exclude):
+        return False
+    return True
+
+
+class RepoMembership(BaseModel):
+    """One configured source (top-level or a space) that yields a repository."""
+
+    space: str | None = None  # None → the top-level ``repositories:`` list
+    workflow_include: list[str] = []  # glob patterns; empty → include all
+    workflow_exclude: list[str] = []  # glob patterns; empty → exclude none
+
+    def allows(self, wf_name: str) -> bool:
+        return workflow_matches_filter(wf_name, self.workflow_include, self.workflow_exclude)
 
 
 class TrackedRepository(BaseModel):
@@ -17,9 +43,19 @@ class TrackedRepository(BaseModel):
     full_name: str  # "owner/repo"
     default_branch: str = "main"
     branches: list[str] = []  # branches to observe; empty → default branch only
-    source: str = "static"  # "static" | "team:org/team-name"
-    workflow_include: list[str] = []  # glob patterns; empty → include all
-    workflow_exclude: list[str] = []  # glob patterns; empty → exclude none
+    source: str = "static"  # "static" | "team:org/team-name"; the first source that yielded it
+    memberships: list[RepoMembership] = []  # one per configured source that yields the repo
+
+    @property
+    def spaces(self) -> list[str]:
+        """Sorted ids of the spaces this repository belongs to."""
+        return sorted({m.space for m in self.memberships if m.space is not None})
+
+    def allows_workflow(self, wf_name: str) -> bool:
+        """True if any membership keeps the workflow (a repo without memberships keeps all)."""
+        if not self.memberships:
+            return True
+        return any(m.allows(wf_name) for m in self.memberships)
 
 
 class WorkflowStatus(BaseModel):

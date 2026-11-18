@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 import sqlite3
 from contextlib import closing
 from pathlib import Path
@@ -214,9 +215,19 @@ async def test_upgrade_legacy_database_keeps_data(tmp_path: Path) -> None:
     assert RUN_DETAIL_COLUMNS <= columns(db, "cached_workflow_status")
     after = read_all(db)
     for table, rows in before.items():
-        if table == "cached_workflow_status":
+        if table in ("cached_workflow_status", "cached_repository"):
             continue
         assert after[table] == rows, table
+    # Cached repositories keep every column; their workflow filters became a membership.
+    with closing(sqlite3.connect(db)) as con:
+        kept = "full_name, default_branch, source, branches_json, open_issues, fetched_at"
+        assert con.execute(f"SELECT {kept} FROM cached_repository").fetchall() == [
+            tuple(r[i] for i in (0, 1, 3, 4, 5, 13)) for r in before["cached_repository"]
+        ]
+        (memberships,) = con.execute("SELECT memberships_json FROM cached_repository").fetchone()
+        assert json.loads(memberships) == [
+            {"space": None, "workflow_include": [], "workflow_exclude": []}
+        ]
     # Old workflow rows survive and the new columns are NULL.
     (row,) = after["cached_workflow_status"]
     assert row[:7] == before["cached_workflow_status"][0][:7]
@@ -261,11 +272,13 @@ async def test_upgrade_unversioned_current_database_is_stamped(tmp_path: Path) -
     after = read_all(db)
     assert after.pop("cached_open_pull_request") == []
     assert after == before
+    # `cached_repository` is left out: the memberships revision rewrites its columns.
     assert [
         s
         for s in schema_snapshot(db)
-        if "alembic_version" not in s[1] and "cached_open_pull_request" not in s[1]
-    ] == schema
+        if not any(t in s[1] for t in ("alembic_version", "cached_open_pull_request"))
+        and "cached_repository" not in s[1]
+    ] == [s for s in schema if "cached_repository" not in s[1]]
 
 
 @pytest.mark.parametrize("state", ["fresh", "legacy", "unversioned"])

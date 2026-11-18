@@ -7,7 +7,7 @@ from datetime import datetime, timedelta, timezone
 from httpx import AsyncClient
 
 from grimoire.github.router import update_cache
-from grimoire.models import RepositoryStats, TrackedRepository, WorkflowStatus
+from grimoire.models import RepoMembership, RepositoryStats, TrackedRepository, WorkflowStatus
 
 
 def _make_repo(name: str = "owner/repo") -> TrackedRepository:
@@ -110,3 +110,17 @@ async def test_repo_detail_exposes_workflow_run_details(async_client: AsyncClien
     }
     assert build["conclusion"] is None
     assert build["run_id"] == 43
+
+
+async def test_repo_list_and_detail_expose_the_spaces_of_a_repo(async_client: AsyncClient):
+    repo = TrackedRepository(
+        full_name="owner/repo",
+        branches=["main"],
+        memberships=[RepoMembership(), RepoMembership(space="b"), RepoMembership(space="a")],
+    )
+    update_cache([repo], [_make_stats()])
+
+    listed = (await async_client.get("/api/repos/")).json()["repositories"][0]
+    detail = (await async_client.get("/api/repos/owner/repo")).json()
+
+    assert listed["spaces"] == detail["spaces"] == ["a", "b"]

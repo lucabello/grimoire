@@ -17,9 +17,11 @@ from grimoire.config import (
     GrimoireConfig,
     PRGroup,
     PRsConfig,
+    SpaceConfig,
     StalenessConfig,
     StaticRepoSource,
     TeamRepoSource,
+    WorkflowFilter,
 )
 from grimoire.database import (
     CachedIssue,
@@ -44,6 +46,7 @@ from grimoire.models import (
     IssueDetail,
     OpenPullRequest,
     PullRequestDetail,
+    RepoMembership,
     RepositoryStats,
     TrackedRepository,
     WorkflowStatus,
@@ -72,10 +75,14 @@ async def client(engine: AsyncEngine) -> GitHubClient:
 def _make_config(
     repos: list[StaticRepoSource | TeamRepoSource] | None = None,
     staleness: StalenessConfig | None = None,
+    spaces: list[SpaceConfig] | None = None,
 ) -> GrimoireConfig:
+    if repos is None and not spaces:
+        repos = [StaticRepoSource(repo="owner/repo1")]
     return GrimoireConfig(
         github=GitHubConfig(token="ghp_test"),
-        repositories=repos or [StaticRepoSource(repo="owner/repo1")],
+        repositories=repos or [],
+        spaces=spaces or [],
         staleness=staleness or StalenessConfig(),
     )
 
@@ -183,6 +190,151 @@ async def test_resolve_team_repos(client: GitHubClient) -> None:
     assert len(repos) == 1
     assert repos[0].full_name == "myorg/service-a"
     assert repos[0].source == "team:myorg/backend"
+
+
+# ---------------------------------------------------------------------------
+# resolve_repositories — spaces
+# ---------------------------------------------------------------------------
+
+_RL = {"X-RateLimit-Remaining": "4999", "X-RateLimit-Limit": "5000"}
+
+
+def _mock_repo(full_name: str, default_branch: str = "main") -> None:
+    respx.get(f"https://api.github.com/repos/{full_name}").mock(
+        return_value=httpx.Response(
+            200,
+            json={"full_name": full_name, "default_branch": default_branch, "archived": False},
+            headers=_RL,
+        )
+    )
+
+
+@respx.mock
+async def test_repo_in_top_level_and_two_spaces_is_one_repo_with_three_memberships(
+    client: GitHubClient,
+) -> None:
+    _mock_repo("owner/shared")
+    config = _make_config(
+        repos=[StaticRepoSource(repo="owner/shared", branches=["main"])],
+        spaces=[
+            SpaceConfig(
+                id="a",
+                name="A",
+                repositories=[
+                    StaticRepoSource(
+                        repo="owner/shared",
+                        branches=["develop"],
+                        workflows=WorkflowFilter(include=["CI"]),
+                    )
+                ],
+            ),
+            SpaceConfig(
+                id="b",
+                name="B",
+                repositories=[StaticRepoSource(repo="owner/shared", branches=["main", "release"])],
+            ),
+        ],
+    )
+
+    repos = await resolve_repositories(config, client)
+
+    assert len(repos) == 1
+    repo = repos[0]
+    assert repo.branches == ["main", "develop", "release"]
+    assert [(m.space, m.workflow_include) for m in repo.memberships] == [
+        (None, []),
+        ("a", ["CI"]),
+        ("b", []),
+    ]
+    assert repo.spaces == ["a", "b"]
+
+
+@respx.mock
+async def test_team_source_in_a_space_tags_all_its_repos(client: GitHubClient) -> None:
+    respx.get("https://api.github.com/orgs/myorg/teams/backend/repos").mock(
+        return_value=httpx.Response(
+            200,
+            json=[
+                {"full_name": "myorg/a", "default_branch": "main", "archived": False},
+                {"full_name": "myorg/b", "default_branch": "main", "archived": False},
+            ],
+            headers=_RL,
+        )
+    )
+    _mock_repo("owner/top")
+    config = _make_config(
+        repos=[StaticRepoSource(repo="owner/top")],
+        spaces=[
+            SpaceConfig(
+                id="backend",
+                name="Backend",
+                repositories=[
+                    TeamRepoSource(team="myorg/backend", workflows=WorkflowFilter(exclude=["X"]))
+                ],
+            )
+        ],
+    )
+
+    repos = {r.full_name: r for r in await resolve_repositories(config, client)}
+
+    assert repos["myorg/a"].spaces == repos["myorg/b"].spaces == ["backend"]
+    assert repos["myorg/a"].source == "team:myorg/backend"
+    assert repos["myorg/a"].memberships[0].workflow_exclude == ["X"]
+    assert repos["owner/top"].spaces == []
+    assert [m.space for m in repos["owner/top"].memberships] == [None]
+
+
+@respx.mock
+async def test_repo_only_in_spaces_resolves_without_top_level_sources(
+    client: GitHubClient,
+) -> None:
+    _mock_repo("owner/only")
+    config = _make_config(
+        spaces=[SpaceConfig(id="a", name="A", repositories=[StaticRepoSource(repo="owner/only")])]
+    )
+    repos = await resolve_repositories(config, client)
+    assert [(r.full_name, r.spaces) for r in repos] == [("owner/only", ["a"])]
+
+
+def test_workflow_is_kept_when_only_one_membership_allows_it() -> None:
+    repo = TrackedRepository(
+        full_name="owner/shared",
+        memberships=[
+            RepoMembership(space="a", workflow_include=["CI"]),
+            RepoMembership(space="b", workflow_exclude=["CI"]),
+        ],
+    )
+    assert repo.allows_workflow("CI")  # b excludes it, a includes it
+    assert repo.allows_workflow("Lint")  # a does not include it, b allows it
+
+    strict = TrackedRepository(
+        full_name="owner/strict",
+        memberships=[
+            RepoMembership(space="a", workflow_include=["CI"]),
+            RepoMembership(space="b", workflow_include=["Release"]),
+        ],
+    )
+    assert strict.allows_workflow("Release")
+    assert not strict.allows_workflow("Lint")
+
+
+async def test_memberships_survive_the_cache_round_trip(engine: AsyncEngine) -> None:
+    repo = TrackedRepository(
+        full_name="owner/shared",
+        branches=["main"],
+        memberships=[
+            RepoMembership(),
+            RepoMembership(space="a", workflow_include=["CI"], workflow_exclude=["Nightly *"]),
+        ],
+    )
+    await save_stats_to_db(
+        engine, [RepositoryStats(full_name="owner/shared", default_branch="main")], [repo]
+    )
+
+    loaded, _ = await load_stats_from_db(engine)
+
+    assert loaded[0].memberships == repo.memberships
+    assert loaded[0].spaces == ["a"]
 
 
 # ---------------------------------------------------------------------------
@@ -1161,6 +1313,47 @@ async def test_prune_removes_repos_not_in_config(engine: AsyncEngine) -> None:
     assert [r.full_name for r in repos] == ["org/keep"]
 
 
+async def test_prune_keeps_repos_referenced_only_by_spaces(engine: AsyncEngine) -> None:
+    from grimoire.github.service import prune_removed_repos
+
+    repos = [
+        TrackedRepository(full_name="org/top", branches=["main"]),
+        TrackedRepository(full_name="org/in-space", branches=["main"]),
+        TrackedRepository(full_name="org/gone", branches=["main"]),
+    ]
+    await save_stats_to_db(
+        engine,
+        [RepositoryStats(full_name=r.full_name, default_branch="main") for r in repos],
+        repos,
+    )
+
+    config = _make_config(
+        repos=[StaticRepoSource(repo="org/top")],
+        spaces=[
+            SpaceConfig(id="a", name="A", repositories=[StaticRepoSource(repo="org/in-space")])
+        ],
+    )
+    assert await prune_removed_repos(engine, config) == 1
+
+    loaded, _ = await load_stats_from_db(engine)
+    assert sorted(r.full_name for r in loaded) == ["org/in-space", "org/top"]
+
+
+async def test_prune_skipped_with_team_source_inside_a_space(engine: AsyncEngine) -> None:
+    from grimoire.github.service import prune_removed_repos
+
+    repo = TrackedRepository(full_name="org/repo", branches=["main"])
+    await save_stats_to_db(
+        engine, [RepositoryStats(full_name="org/repo", default_branch="main")], [repo]
+    )
+
+    config = _make_config(
+        repos=[StaticRepoSource(repo="org/other")],
+        spaces=[SpaceConfig(id="a", name="A", repositories=[TeamRepoSource(team="org/t")])],
+    )
+    assert await prune_removed_repos(engine, config) == 0
+
+
 async def test_prune_skipped_with_team_sources(engine: AsyncEngine) -> None:
     """Pruning should be skipped when team sources are present."""
     from grimoire.github.service import prune_removed_repos
@@ -1286,7 +1479,7 @@ async def test_prune_stale_data_removes_excluded_workflows(engine: AsyncEngine) 
         full_name=repo_name,
         default_branch="main",
         branches=["main"],
-        workflow_exclude=["Nightly *"],
+        memberships=[RepoMembership(workflow_exclude=["Nightly *"])],
     )
     await save_stats_to_db(
         engine,

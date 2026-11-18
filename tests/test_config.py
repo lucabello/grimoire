@@ -529,33 +529,33 @@ class TestWorkflowMatchesFilter:
     """Tests for the workflow include/exclude filter logic."""
 
     def test_no_filters_allows_all(self) -> None:
-        from grimoire.github.service import _workflow_matches_filter
+        from grimoire.models import workflow_matches_filter
 
-        assert _workflow_matches_filter("CI", [], []) is True
-        assert _workflow_matches_filter("Publish", [], []) is True
+        assert workflow_matches_filter("CI", [], []) is True
+        assert workflow_matches_filter("Publish", [], []) is True
 
     def test_include_only(self) -> None:
-        from grimoire.github.service import _workflow_matches_filter
+        from grimoire.models import workflow_matches_filter
 
-        assert _workflow_matches_filter("CI", ["CI", "Tests *"], []) is True
-        assert _workflow_matches_filter("Tests nightly", ["CI", "Tests *"], []) is True
-        assert _workflow_matches_filter("Publish", ["CI", "Tests *"], []) is False
+        assert workflow_matches_filter("CI", ["CI", "Tests *"], []) is True
+        assert workflow_matches_filter("Tests nightly", ["CI", "Tests *"], []) is True
+        assert workflow_matches_filter("Publish", ["CI", "Tests *"], []) is False
 
     def test_exclude_only(self) -> None:
-        from grimoire.github.service import _workflow_matches_filter
+        from grimoire.models import workflow_matches_filter
 
-        assert _workflow_matches_filter("CI", [], ["Publish *"]) is True
-        assert _workflow_matches_filter("Publish release", [], ["Publish *"]) is False
+        assert workflow_matches_filter("CI", [], ["Publish *"]) is True
+        assert workflow_matches_filter("Publish release", [], ["Publish *"]) is False
 
     def test_include_and_exclude(self) -> None:
-        from grimoire.github.service import _workflow_matches_filter
+        from grimoire.models import workflow_matches_filter
 
         # "Tests CI" matches include, doesn't match exclude → allowed
-        assert _workflow_matches_filter("Tests CI", ["Tests *"], ["Tests nightly"]) is True
+        assert workflow_matches_filter("Tests CI", ["Tests *"], ["Tests nightly"]) is True
         # "Tests nightly" matches include AND exclude → excluded
-        assert _workflow_matches_filter("Tests nightly", ["Tests *"], ["Tests nightly"]) is False
+        assert workflow_matches_filter("Tests nightly", ["Tests *"], ["Tests nightly"]) is False
         # "Publish" doesn't match include → excluded
-        assert _workflow_matches_filter("Publish", ["Tests *"], ["Publish"]) is False
+        assert workflow_matches_filter("Publish", ["Tests *"], ["Publish"]) is False
 
 
 class TestConfigPathResolution:

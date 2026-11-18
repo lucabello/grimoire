@@ -53,7 +53,7 @@ The GitHub REST API has a rate limit of 5,000 requests/hour for authenticated us
 **Efficient fetching per resource type:**
 - **Issues:** Use `GET /repos/{owner}/{repo}/issues?state=open&per_page=100`. This returns both issues and PRs mixed together — filter client-side by excluding items that have a `pull_request` key in the JSON. Full list is needed to compute stale counts.
 - **Pull requests:** Use `GET /repos/{owner}/{repo}/pulls?state=open&per_page=100` (the Pulls API, not the Issues API). Full list is needed to compute stale counts. The same list supplies every open PR for the PRs page (see 2.2): `number`, `title`, `html_url`, `user.login`, `created_at`, `updated_at`, `draft`, `labels[].name`, `base.ref`, `head.ref`, `head.sha` and `auto_merge`. Bots are reported as `renovate[bot]` / `dependabot[bot]` (`user.type` `Bot`; checked against real payloads). The list has no CI, review or merge state.
-- **Workflows:** Use `GET /repos/{owner}/{repo}/actions/workflows` to list workflows, then `GET /repos/{owner}/{repo}/actions/workflows/{id}/runs?branch={branch}&per_page=1` to get only the latest run per workflow+branch. Before fetching runs, apply the repo's `workflow_include`/`workflow_exclude` glob patterns (via `fnmatch`) to skip irrelevant workflows. For the repo's default branch only, also fetch `GET /repos/{owner}/{repo}/actions/workflows/{id}/runs?per_page=10` (no `branch` param), discard any returned run whose `head_branch` matches another *tracked* branch of the same repo (it belongs to that branch, not the default one), and compare `created_at` of the remaining candidates against the branch-filtered result, keeping whichever is more recent. This handles workflows triggered by non-branch events (e.g. `release`, tag pushes): their `head_branch` is a tag, not the default branch, so the branch-filtered query can return an old (or no) run while a newer run is invisible to the filter. Non-default tracked branches never get this extra check: periodic or release-only workflows never actually ran there and must not be shown as if they did.
+- **Workflows:** Use `GET /repos/{owner}/{repo}/actions/workflows` to list workflows, then `GET /repos/{owner}/{repo}/actions/workflows/{id}/runs?branch={branch}&per_page=1` to get only the latest run per workflow+branch. Before fetching runs, apply the repo's membership filters (`TrackedRepository.allows_workflow`: a workflow is kept if ANY membership's `include`/`exclude` glob patterns, via `fnmatch`, allow it) to skip irrelevant workflows. For the repo's default branch only, also fetch `GET /repos/{owner}/{repo}/actions/workflows/{id}/runs?per_page=10` (no `branch` param), discard any returned run whose `head_branch` matches another *tracked* branch of the same repo (it belongs to that branch, not the default one), and compare `created_at` of the remaining candidates against the branch-filtered result, keeping whichever is more recent. This handles workflows triggered by non-branch events (e.g. `release`, tag pushes): their `head_branch` is a tag, not the default branch, so the branch-filtered query can return an old (or no) run while a newer run is invisible to the filter. Non-default tracked branches never get this extra check: periodic or release-only workflows never actually ran there and must not be shown as if they did.
 - **Workflow run details:** The run that decides a workflow's status (the same run object, from the same requests — no extra calls) also supplies `run_id` (`id`), `run_attempt`, `event`, `head_sha`, `conclusion` (the raw GitHub value, `null` while the run is in progress), `created_at`, `run_started_at` and `updated_at`. `status` keeps its coarse mapping (`cancelled` and `timed_out` map to `failure`); `conclusion` carries the raw value. A status reused from the previous refresh (304 on the runs request, or a failed workflow listing) keeps its previous run details.
 - Use `per_page=100` on all list endpoints to minimize pagination.
 
@@ -94,13 +94,17 @@ async def resolve_repositories(
     config: GrimoireConfig, client: GitHubClient
 ) -> list[TrackedRepository]:
     """
-    For each entry in config.repositories:
+    Sources are resolved in order: the top-level config.repositories first
+    (membership space=None), then the repositories of each entry of
+    config.spaces (membership space=<id>).
       - StaticRepoSource: validate repo exists, resolve default branch if
         no branches specified.
       - TeamRepoSource: fetch team repos, exclude listed repos, filter out
         archived repos.
-    Deduplicate by full_name (merge branches if same repo appears in
-    multiple sources).
+    One TrackedRepository per full_name: `branches` is the ordered union of
+    the branches of every source that yields it, and each such source appends
+    one RepoMembership(space, workflow_include, workflow_exclude).
+    `source` keeps the label of the first source ("static" | "team:...").
     Always filter out archived repositories.
     """
 
@@ -175,12 +179,16 @@ All fetched data is persisted to the SQLite database as the **persistent cache**
 
 | Table | Columns |
 |---|---|
-| `cached_repository` | full_name, default_branch, archived, source, last_commit_at, total_branches, fetched_at |
+| `cached_repository` | full_name, default_branch, archived, source, branches_json, last_commit_at, total_branches, memberships_json, fetched_at |
 | `cached_issue` | repo_full_name, title, number, url, author, created_at, last_comment_at, fetched_at |
 | `cached_pull_request` | repo_full_name, title, number, url, author, created_at, last_push_at, last_comment_at, fetched_at |
 | `cached_open_pull_request` | repo_full_name, number, title, url, author, created_at, updated_at, draft, labels_json, base_ref, head_ref, head_sha, auto_merge, ci_state, review_decision, merge_state, ci_fetched_at, fetched_at (the last four state fields nullable) |
 | `cached_workflow_status` | repo_full_name, workflow_name, branch, status, url, run_url, run_id, run_attempt, event, head_sha, conclusion, run_created_at, run_started_at, run_updated_at, fetched_at (all run fields nullable) |
 | `cached_etag` | endpoint_url, etag, last_modified |
+
+`memberships_json` stores the JSON-encoded `RepoMembership` list (`space`, `workflow_include`, `workflow_exclude`). `load_stats_from_db` restores it on startup, before the first refresh, because the space membership of team-sourced repos is only known after a GitHub call. Revision `268526b60afc` replaced the former `workflow_include_json`/`workflow_exclude_json` columns: existing rows become one membership without a space carrying their old filters; the downgrade writes the first membership's filters back.
+
+`prune_removed_repos` treats repos referenced by the sources of spaces as configured (and still skips pruning when any top-level or space source is a team); `prune_stale_data` deletes cached workflow statuses that no membership allows.
 
 The rows of `cached_open_pull_request` are replaced per repository on every save (like the stale PR rows), and pruned with the repository. `cached_pull_request` keeps only the stale PRs that the dashboard and backlog use; it is unchanged.
 
@@ -224,6 +232,7 @@ class RepoSummary(BaseModel):
     default_branch: str
     branches: list[str]
     source: str                     # "static" | "team:org/team-name"
+    spaces: list[str]               # sorted ids of the spaces the repo belongs to
     open_issues: int
     stale_issues: int
     open_pull_requests: int
@@ -244,6 +253,7 @@ class RepoDetailResponse(BaseModel):
     default_branch: str
     branches: list[str]
     source: str
+    spaces: list[str]
     open_issues: int
     stale_issues: list[IssueResponse]
     open_pull_requests: int
@@ -301,6 +311,8 @@ class RefreshResponse(BaseModel):
 - [ ] `GET /api/repos/{owner}/{name}` returns 404 for untracked repos
 - [ ] `POST /api/refresh` returns 202 and triggers a background refresh
 - [ ] `resolve_repositories` correctly handles static repos, team repos, exclusions, and archived filtering
+- [ ] A repo listed top-level and in two spaces yields one `TrackedRepository` with three memberships and the union of branches; a team source inside a space tags all its repos
+- [ ] A workflow is kept when only one membership's filter allows it; memberships survive the cache round trip; the memberships migration preserves filters on upgrade and downgrade; `prune_removed_repos` keeps space-only repos
 - [ ] `fetch_repository_stats` returns correct issue/PR/workflow counts
 - [ ] Stale detection works: issues with no comments beyond threshold, PRs with no pushes/comments beyond threshold
 - [ ] Pagination works for repos with >30 issues/PRs

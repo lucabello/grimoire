@@ -103,6 +103,20 @@ INSERT INTO cached_workflow_status VALUES (1, 'owner/repo1', 'CI', 'main', 'succ
 INSERT INTO cached_etag VALUES ('https://api.github.com/x', 'abc', 'yesterday');
 """
 
+# `cached_repository` as `create_all` made it before the memberships revision replaced its
+# workflow filter columns.
+CACHED_REPOSITORY_WITH_WORKFLOW_FILTERS = """
+CREATE TABLE cached_repository (
+    full_name VARCHAR NOT NULL, default_branch VARCHAR NOT NULL, archived BOOLEAN NOT NULL,
+    source VARCHAR NOT NULL, branches_json VARCHAR NOT NULL, open_issues INTEGER NOT NULL,
+    stale_issues INTEGER NOT NULL, open_pull_requests INTEGER NOT NULL,
+    stale_pull_requests INTEGER NOT NULL, last_commit_at DATETIME,
+    total_branches INTEGER NOT NULL, workflow_include_json VARCHAR NOT NULL,
+    workflow_exclude_json VARCHAR NOT NULL, fetched_at DATETIME NOT NULL,
+    PRIMARY KEY (full_name)
+)
+"""
+
 RUN_DETAIL_COLUMNS = {
     "run_id",
     "run_attempt",
@@ -131,9 +145,14 @@ async def create_unversioned_current_database(path: Path) -> None:
     """Create a database as `create_all` made it after the run details, before migrations."""
     engine = await get_engine(str(path))
     # Tables added by later revisions did not exist yet
-    tables = [t for t in SQLModel.metadata.sorted_tables if t.name != "cached_open_pull_request"]
+    tables = [
+        t
+        for t in SQLModel.metadata.sorted_tables
+        if t.name not in ("cached_open_pull_request", "cached_repository")
+    ]
     async with engine.begin() as conn:
         await conn.run_sync(lambda c: SQLModel.metadata.create_all(c, tables=tables))
+        await conn.exec_driver_sql(CACHED_REPOSITORY_WITH_WORKFLOW_FILTERS)
     async with AsyncSession(engine) as session:
         session.add(CheckToggleRecord(check_slug="lint", enabled=False))
         session.add(

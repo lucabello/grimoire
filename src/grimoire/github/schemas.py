@@ -56,6 +56,7 @@ class RepoSummary(BaseModel):
     default_branch: str
     branches: list[str] = []
     source: str = "static"
+    spaces: list[str] = []
     open_issues: int = 0
     stale_issues: int = 0
     open_pull_requests: int = 0
@@ -81,6 +82,7 @@ class RepoDetailResponse(BaseModel):
     default_branch: str
     branches: list[str] = []
     source: str = "static"
+    spaces: list[str] = []
     open_issues: int = 0
     stale_issues: int = 0
     open_pull_requests: int = 0
