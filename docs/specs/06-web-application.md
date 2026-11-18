@@ -145,7 +145,7 @@ The page, `GET /partials/dashboard-matrix`, `/partials/dashboard-list` and `/par
 
 - Only repos with `selection.includes(repo)` are shown; the stats bar counts only those repos.
 - Workflow cells use `selection.workflow_visible(repo, workflow_name)`, so an overlapping repo shows the union of the filters of the selected spaces (only that space's workflows for a single space; every membership for All). Workflow group columns stay global and are not hidden when empty.
-- Rows carry no per-row space markers: the space selector and the active-filter bar say what is filtered, and the repository page (6.4) names a repo's spaces.
+- Rows carry no per-row space markers: the space selector says what is filtered (its button and tooltip name the selection), and the repository page (6.4) names a repo's spaces.
 
 ### View Switcher
 
@@ -645,7 +645,7 @@ HTML pages and HTMX partials filter by the user's space selection; the JSON API 
 
 - `html_space_selection(request) -> SpaceSelection` (dependency used by page routes): `?spaces=a,b` beats the cookie `grimoire_spaces` (comma-separated ids). Unknown ids are dropped; an empty selection or every space selected is All.
 - A request with a `?spaces=` parameter also saves the normalised selection in the cookie `grimoire_spaces` (`Max-Age` one year, `SameSite=Lax`, `Path` = the app `root_path` or `/`; not `HttpOnly`, the navbar script writes it too). All is saved as an empty value. FastAPI does not merge cookies set through a dependency into a directly returned `TemplateResponse`, so the dependency only records the value on `request.state` and `space_cookie_middleware` appends the `Set-Cookie` header to the response. The selection is resolved once per request.
-- The context processor on `templates` gives every template `spaces` (the shape of `GET /api/spaces`: `id`, `name`, `description`, `repo_count`; empty when no spaces are configured), `space_selection` (a `SpaceSelection`; `.ids` is `None` for All) and `space_filter` (data of the active-filter bar, `None` under All).
+- The context processor on `templates` gives every template `spaces` (the shape of `GET /api/spaces`: `id`, `name`, `description`, `repo_count`; empty when no spaces are configured), and `space_selection` (a `SpaceSelection`; `.ids` is `None` for All).
 ### Navbar selector and badges
 
 **Files:** `templates/base.html` (includes the selector inside the left navbar block, next to the logo), `templates/partials/space_selector.html`, `templates/partials/_space_macros.html`, `templates/repository.html`.
@@ -659,12 +659,6 @@ HTML pages and HTMX partials filter by the user's space selection; the JSON API 
   - the **rest of the row**, a single `<button data-space-only>` holding the name and the repo count spelled out ("3 repos", "1 repo"), shows **only** that space. There is no separate "only" link.
 - **Applying.** **All**, **None** and a **row click** (show only that space) are decisive: they write the cookie and reload at once. Ticking boxes accumulates and applies when the dropdown closes. None selects nothing, which means All. The cookie is written from JavaScript with the attributes the server uses (`Path` = `BASE_PATH` or `/`, `Max-Age` one year, `SameSite=Lax`; nothing or every row checked is an empty value), and the page reloads so every page and HTMX partial picks it up. The reload drops `?spaces=` from the URL because it would override the cookie.
 - **No badges or chips per row.** The dashboard, backlog and PRs rows carry no space markers (they were noise). The repository page (6.4) shows a plain text line under the title instead: `Spaces: Alpha, Beta` (config order), or `Not in any space` for an unassigned repo; it is absent when no spaces are configured.
-
-### Active-filter bar
-
-**File:** `templates/partials/space_filter_bar.html`, included by `base.html` under the navbar; data from `space_filter_bar()` in `web/spaces.py`.
-
-Shown only while a filter is active (nothing is shown under All). It says **what** is filtered and how to undo it: "Showing" followed by one removable chip per selected space, "· N of M repositories" (the repos in the selection out of all tracked repos, from `count_repos`), and a "Show all spaces" link. Every control is a plain link to `?spaces=`: a chip's link lists the other selected ids (so removing the last one leaves an empty value, which means All) and "Show all spaces" links to `?spaces=`. The server applies and saves the new selection through the usual `?spaces=` handling, so the bar needs no script and works by keyboard; each chip link has an `aria-label` ("Remove <name> from the filter"). The links are relative to the current page, so other query parameters of the page are dropped.
 
 - Page tasks filter with `space_selection.includes(repo)` and `space_selection.workflow_visible(repo, workflow_name)`.
 
@@ -694,7 +688,7 @@ Shown only while a filter is active (nothing is shown under All). It says **what
 - [ ] The PRs page and partial show only the PRs of the selected spaces' repos and hide groups left empty; `GET /api/prs?spaces=` filters the PRs, keeps every group and ignores the cookie
 - [ ] `GET /api/prs` returns the groups with their PRs without GitHub calls; `/maintenance` and `/api/maintenance/groups` are gone
 - [ ] `?spaces=` beats the `grimoire_spaces` cookie on HTML pages and is saved to it (Max-Age 1 year, SameSite=Lax, Path = root_path); unknown ids are dropped; `/api/*` ignores the cookie; `GET /api/spaces` lists the spaces, plus Unassigned only when unassigned repos exist
-- [ ] The navbar selector is absent without spaces; the button reads "Spaces" / the name / "Spaces (N)"; no colour is used for spaces; the active-filter bar appears only while filtering, lists the selected spaces with removable chips and "N of M repositories", and its links apply the new selection; only, All and None work; the selection survives reload and browser restart; it works under `--root-path`
+- [ ] The navbar selector is absent without spaces; the button reads "Spaces" / the name / "Spaces (N)"; no colour is used for spaces; ticking a checkbox toggles one space, clicking a row shows only that space, All and None work; the selection survives reload and browser restart; it works under `--root-path`
 - [ ] A cross-site `POST` (foreign `Origin`, or `Sec-Fetch-Site: cross-site`/`same-site`) to any state-changing route is rejected with 403 and changes nothing; same-origin, `Sec-Fetch-Site: none` and header-less requests are allowed; `GET` is unaffected
 - [ ] HTMX partial updates work without full page reloads
 - [ ] Pages render correctly in both light and dark mode
