@@ -412,7 +412,7 @@ def overlap_spaces() -> Iterator[None]:
     source = [StaticRepoSource(repo="o/x")]
     set_spaces_config(
         [
-            SpaceConfig(id="a", name="Alpha", color="#112233", repositories=source),
+            SpaceConfig(id="a", name="Alpha", repositories=source),
             SpaceConfig(id="b", name="Beta", repositories=source),
         ],
         get_tracked_repos,

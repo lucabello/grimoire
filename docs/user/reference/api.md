@@ -10,7 +10,7 @@ Spaces are configured with [`spaces` and `space_files`](configuration.md#spaces)
 |--------|------|-------------|
 | `GET` | `/api/spaces` | The configured spaces, plus **Unassigned** while repositories belong to no space |
 
-The response is a list of `{id, name, color, description, repo_count}`. The Unassigned entry has the id `_unassigned`. The list is empty when no spaces are configured.
+The response is a list of `{id, name, description, repo_count}`. The Unassigned entry has the id `_unassigned`. The list is empty when no spaces are configured.
 
 ### Filtering by space
 

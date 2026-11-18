@@ -87,7 +87,6 @@ repositories:                   # optional when `spaces`/`space_files` provide a
 spaces:
   - id: platform                # ^[a-z0-9][a-z0-9-]*$ (ids starting with "_" are reserved, e.g. _unassigned)
     name: "Platform"
-    color: "#3366ff"            # optional "#rrggbb"
     description: "Platform team" # optional, default ""
     repositories:               # non-empty; same sources as top-level `repositories`
       - repo: "lucabello/grimoire"
@@ -156,7 +155,7 @@ log_file: "./grimoire.log"
 - `TeamRepoSource(team: str, exclude: list[str] = [], workflows: WorkflowFilter = WorkflowFilter())`
 - `WorkflowFilter(include: list[str] = [], exclude: list[str] = [])` — glob patterns (fnmatch) on workflow name
 - `RepoSource` — discriminated union of the above (by field presence)
-- `SpaceConfig(id: str, name: str, color: str | None = None, description: str = "", repositories: list[RepoSource])` — `extra="forbid"`; `id` matches `^[a-z0-9][a-z0-9-]*$` (so the reserved `_unassigned` can never collide); `color` matches `#rrggbb`; `repositories` is non-empty and parsed like the top-level list
+- `SpaceConfig(id: str, name: str, description: str = "", repositories: list[RepoSource])` — `extra="forbid"`; `id` matches `^[a-z0-9][a-z0-9-]*$` (so the reserved `_unassigned` can never collide); `repositories` is non-empty and parsed like the top-level list
 - `StalenessConfig(pull_requests_days: int = 30, issues_days: int = 365, problematic_stale_issues_pct: int = 20, problematic_stale_prs_pct: int = 20)`
 - `BacklogCategoryWeights(failing_workflow: float = 100, failing_check_error: float = 80, failing_check_warning: float = 30, stale_pr: float = 50, stale_issue: float = 20)`
 - `RepositoryWeightRule(regex: str | None = None, repos: list[str] | None = None, weight: float = 1.0)` — exactly one of `regex` or `repos` must be set; rules are evaluated top-to-bottom and the last match wins
@@ -287,7 +286,7 @@ class ActionRepoResult(BaseModel):
   - `includes(repo)`: All → true; otherwise true if `repo.spaces` intersects `ids`, or `_unassigned` is selected and the repo has no space.
   - `workflow_visible(repo, workflow_name)`: considers the memberships of the selected spaces (All → every membership; `_unassigned` → the `space=None` memberships of an unassigned repo) and is true if any of them allows the workflow (`RepoMembership.allows`, the shared fnmatch helper `workflow_matches_filter` in `models.py`). A repo without memberships shows every workflow.
 - `parse_space_ids(raw, known) -> frozenset[str] | None` — comma-separated ids; unknown ids are dropped; an empty result or every known id (including `_unassigned` when offered) normalises to All (`None`).
-- `set_spaces_config(spaces, repos_provider)` — setter called by the app lifespan (`repos_provider` returns the current tracked repos, `github.router.get_tracked_repos`). `list_spaces()` returns `SpaceInfo(id, name, color, description, repo_count)` for every configured space, plus the Unassigned entry (`name="Unassigned"`) when unassigned repos exist; empty when no spaces are configured.
+- `set_spaces_config(spaces, repos_provider)` — setter called by the app lifespan (`repos_provider` returns the current tracked repos, `github.router.get_tracked_repos`). `list_spaces()` returns `SpaceInfo(id, name, description, repo_count)` for every configured space, plus the Unassigned entry (`name="Unassigned"`) when unassigned repos exist; empty when no spaces are configured.
 - `api_space_selection` — FastAPI dependency reading **only** `?spaces=` (default All); JSON `/api/*` endpoints never read the cookie.
 - `router` — `GET /api/spaces` → `list[SpaceInfo]`.
 - `validate_definition_spaces(kind, definitions, space_ids)` — startup validation of the `spaces:` field of checks and actions (specs 4 and 5).
@@ -354,5 +353,5 @@ The schema is versioned with Alembic. The migrations live in the `src/grimoire/m
 - [ ] The migrated schema matches the SQLModel models (drift test)
 - [ ] `just dev` starts the server on port 8000, returns 200 on `GET /`
 - [ ] Tests cover config parsing (valid input, missing fields, invalid values)
-- [ ] A config without `spaces` loads unchanged; inline `spaces`, `space_files` or both load; duplicate ids (inline/file, file/file), invalid ids/colors, unknown keys and non-mapping space files fail with a clear message; empty top-level `repositories` is valid when a space has sources, and a config with no source anywhere is rejected
+- [ ] A config without `spaces` loads unchanged; inline `spaces`, `space_files` or both load; duplicate ids (inline/file, file/file), invalid ids, a `color` key (removed: spaces are never told apart by colour), unknown keys and non-mapping space files fail with a clear message; empty top-level `repositories` is valid when a space has sources, and a config with no source anywhere is rejected
 - [ ] A config without `prs` loads with no groups; duplicate/blank group names, groups without a matcher and blank list entries fail validation with a clear message

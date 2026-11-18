@@ -39,7 +39,6 @@ class SpaceInfo(BaseModel):
 
     id: str
     name: str
-    color: str | None = None
     description: str = ""
     repo_count: int = 0
 
@@ -56,7 +55,6 @@ def list_spaces() -> list[SpaceInfo]:
         SpaceInfo(
             id=space.id,
             name=space.name,
-            color=space.color,
             description=space.description,
             repo_count=sum(1 for repo in repos if space.id in repo.spaces),
         )
@@ -119,6 +117,12 @@ class SpaceSelection:
 
 
 ALL_SPACES = SpaceSelection()
+
+
+def count_repos(selection: SpaceSelection) -> tuple[int, int]:
+    """(repos in the selection, tracked repos), for the "n of N repositories" in the filter bar."""
+    repos = list(_repos_provider())
+    return sum(1 for repo in repos if selection.includes(repo)), len(repos)
 
 
 def parse_space_ids(raw: str | None, known: set[str]) -> frozenset[str] | None:

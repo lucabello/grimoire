@@ -16,7 +16,6 @@ This guide shows how to serve several teams from one Grimoire, so that each team
     # config/spaces.d/payments.yaml
     id: payments
     name: "Payments"
-    color: "#e8590c"
     repositories:
       - team: "org-name/payments"
       - repo: "org-name/shared-lib"

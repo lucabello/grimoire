@@ -1,28 +1,24 @@
 {# Navbar multi-select of spaces. Hidden entirely when no spaces are configured.
    A <details> dropdown: it renders in browsers that hid the earlier focus-based markup. #}
-{% from "partials/_space_macros.html" import space_dot with context %}
 {% if spaces %}
 {% set selected_ids = space_selection.ids %}
 {% set selected = spaces if selected_ids is none else spaces | selectattr("id", "in", selected_ids) | list %}
+{# "Spaces" under All, the name when exactly one is selected, "Spaces (N)" for several #}
 {% if selected_ids is none %}
-    {% set label = "All spaces" %}
+    {% set label = "Spaces" %}
 {% elif selected | length == 1 %}
     {% set label = selected[0].name %}
 {% else %}
-    {% set label = selected[0].name ~ " +" ~ (selected | length - 1) %}
+    {% set label = "Spaces (" ~ (selected | length) ~ ")" %}
 {% endif %}
 <details class="dropdown" id="space-selector">
-    <summary class="btn btn-outline btn-sm gap-2 normal-case whitespace-nowrap flex-nowrap list-none" aria-label="Filter by space" title="Filter every page by space">
+    <summary class="btn btn-outline btn-sm gap-2 normal-case whitespace-nowrap flex-nowrap list-none" aria-label="Filter by space" title="{{ 'Showing: ' ~ (selected | map(attribute='name') | join(', ')) if selected_ids is not none else 'Filter every page by space' }}">
         <i class="fa-solid fa-layer-group text-xs opacity-70"></i>
-        {# Dots show the selected spaces only; nothing is shown under All #}
-        <span id="space-selector-dots" class="flex items-center">
-            {% if selected_ids is not none %}{% for space in selected[:3] %}<span class="-ml-1 first:ml-0 rounded-full border-2 border-base-100 inline-flex">{{ space_dot(space.color, space.id == "_unassigned") }}</span>{% endfor %}{% endif %}
-        </span>
         <span id="space-selector-label" class="whitespace-nowrap">{{ label }}</span>
         <i class="fa-solid fa-chevron-down text-xs opacity-60"></i>
     </summary>
     <div class="dropdown-content z-30 mt-1 w-72 rounded-box bg-base-100 border border-base-300 shadow-xl p-2">
-        <div class="flex items-center justify-between px-2 pb-1 text-xs uppercase tracking-wide opacity-60">
+        <div class="flex items-center justify-between px-2 pb-1 text-xs uppercase tracking-wide opacity-80">
             <span>Spaces</span>
             <span class="flex gap-2 normal-case tracking-normal">
                 <button type="button" class="link link-hover" data-space-action="all">All</button>
@@ -33,22 +29,21 @@
         <ul class="menu menu-sm p-0" id="space-list">
             {% for space in spaces %}
             <li data-space-row="{{ space.name | lower }}">
-                <div class="flex items-center gap-2 py-1 px-2 {% if space.id == '_unassigned' %}opacity-70{% endif %}" title="{{ space.description }}">
+                <div class="flex items-center gap-2 py-1 px-2" title="{{ space.description }}">
                     {# The name is part of the checkbox's label: clicking it toggles the box. #}
                     <label class="flex flex-1 items-center gap-2 min-w-0 cursor-pointer">
                         <input type="checkbox" class="checkbox checkbox-xs" data-space-id="{{ space.id }}" data-name="{{ space.name }}"
                                {% if selected_ids is none or space.id in selected_ids %}checked{% endif %}>
-                        <span data-space-dot>{{ space_dot(space.color, space.id == "_unassigned") }}</span>
-                        <span class="truncate">{{ space.name }}</span>
+                        <span class="truncate{% if space.id == '_unassigned' %} italic{% endif %}">{{ space.name }}</span>
                     </label>
-                    <span class="text-xs opacity-50 whitespace-nowrap">{{ space.repo_count }} {{ "repo" if space.repo_count == 1 else "repos" }}</span>
-                    <button type="button" class="link link-hover text-xs opacity-70" data-space-only="{{ space.id }}" title="Show only {{ space.name }}">only</button>
+                    <span class="text-xs opacity-80 whitespace-nowrap">{{ space.repo_count }} {{ "repo" if space.repo_count == 1 else "repos" }}</span>
+                    <button type="button" class="link link-hover text-xs" data-space-only="{{ space.id }}" title="Show only {{ space.name }}">only</button>
                 </div>
             </li>
             {% endfor %}
         </ul>
-        <div id="space-no-match" class="px-2 py-1 text-sm opacity-60 hidden">No matching spaces</div>
-        <div class="px-2 pt-1 text-xs opacity-50">saved in this browser</div>
+        <div id="space-no-match" class="px-2 py-1 text-sm opacity-80 hidden">No matching spaces</div>
+        <div class="px-2 pt-1 text-xs opacity-80">saved in this browser</div>
     </div>
 </details>
 <script>
@@ -56,8 +51,7 @@
     const root = document.getElementById('space-selector');
     const boxes = Array.from(root.querySelectorAll('input[data-space-id]'));
     const label = document.getElementById('space-selector-label');
-    const dots = document.getElementById('space-selector-dots');
-    const DOT_WRAP = '-ml-1 first:ml-0 rounded-full border-2 border-base-100 inline-flex';
+    const summary = root.querySelector('summary');
     let changed = false;
 
     // Nothing or everything selected means All: the server normalises the same way.
@@ -73,21 +67,17 @@
         changed = true;
     }
 
-    // Keep the button in step with the boxes: the label names the selection, the dots show
-    // the colours of the selected spaces, and nothing is shown under All.
+    // Keep the button in step with the boxes: "Spaces" under All, the name when exactly one is
+    // selected, "Spaces (N)" for several; the tooltip lists the selected names.
     function refreshButton() {
         const picked = pickedBoxes();
         if (picked.length === 0) {
-            label.textContent = 'All spaces';
+            label.textContent = 'Spaces';
+            summary.title = 'Filter every page by space';
         } else {
-            label.textContent = picked[0].dataset.name + (picked.length > 1 ? ' +' + (picked.length - 1) : '');
+            label.textContent = picked.length === 1 ? picked[0].dataset.name : 'Spaces (' + picked.length + ')';
+            summary.title = 'Showing: ' + picked.map(b => b.dataset.name).join(', ');
         }
-        dots.replaceChildren(...picked.slice(0, 3).map(box => {
-            const wrap = document.createElement('span');
-            wrap.className = DOT_WRAP;
-            wrap.appendChild(box.closest('li').querySelector('[data-space-dot]').firstElementChild.cloneNode(true));
-            return wrap;
-        }));
     }
 
     function reload() {

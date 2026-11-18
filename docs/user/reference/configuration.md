@@ -123,7 +123,6 @@ Each entry has these keys and no others; an unknown key is a startup error.
 |-----|------|----------|-------------|
 | `id` | string | Yes | Identifier used in `?spaces=`, in the `spaces` field of [checks](checks.md) and [actions](actions.md), and in the metrics. Must match `^[a-z0-9][a-z0-9-]*$`: lower-case letters, digits and `-`, not starting with `-` or `_`. Unique across inline spaces and space files. |
 | `name` | string | Yes | Display name. |
-| `color` | string | No | `#rrggbb`, used for the dots in the selector and the badges. |
 | `description` | string | No | Default `""`. Shown as a tooltip in the selector. |
 | `repositories` | list | Yes, non-empty | Repository sources, with the same keys as the top-level [`repositories`](#repositories): static repos and team sources, including `branches`, `exclude` and `workflows`. |
 
@@ -131,7 +130,6 @@ Each entry has these keys and no others; an unknown key is a startup error.
 spaces:
   - id: platform
     name: "Platform"
-    color: "#3366ff"
     description: "Platform team"
     repositories:
       - repo: "org-name/api"
@@ -163,7 +161,6 @@ space_files: ["spaces.d/*.yaml"]
 # spaces.d/payments.yaml — the same keys as one entry of `spaces`
 id: payments
 name: "Payments"
-color: "#e8590c"
 repositories:
   - repo: "org-name/payments-api"
   - repo: "org-name/shared-lib"
@@ -422,7 +419,6 @@ prs:
 spaces:
   - id: platform
     name: "Platform"
-    color: "#3366ff"
     repositories:
       - repo: "owner/repo-name"
       - team: "org-name/platform"

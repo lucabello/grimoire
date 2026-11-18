@@ -24,7 +24,7 @@ def spaces() -> Iterator[None]:
     source = [StaticRepoSource(repo="acme/api")]
     set_spaces_config(
         [
-            SpaceConfig(id="a", name="Alpha", color="#112233", repositories=source),
+            SpaceConfig(id="a", name="Alpha", repositories=source),
             SpaceConfig(id="b", name="Beta", repositories=source),
         ],
         get_tracked_repos,
@@ -137,15 +137,13 @@ class TestSpacesEndpoint:
             {
                 "id": "a",
                 "name": "Alpha",
-                "color": "#112233",
                 "description": "",
                 "repo_count": 1,
             },
-            {"id": "b", "name": "Beta", "color": None, "description": "", "repo_count": 1},
+            {"id": "b", "name": "Beta", "description": "", "repo_count": 1},
             {
                 "id": "_unassigned",
                 "name": "Unassigned",
-                "color": None,
                 "description": "",
                 "repo_count": 1,
             },
@@ -225,10 +223,10 @@ class TestSelectorUI:
     @pytest.mark.parametrize(
         ("cookie", "label"),
         [
-            ("", "All spaces"),
+            ("", "Spaces"),
             ("b", "Beta"),
-            ("a,b", "Alpha +1"),
-            ("a,b,_unassigned", "All spaces"),
+            ("a,b", "Spaces (2)"),
+            ("a,b,_unassigned", "Spaces"),
         ],
     )
     async def test_collapsed_label(
@@ -291,25 +289,32 @@ class TestSelectorUI:
         assert '<details class="dropdown" id="space-selector">' in html  # no shrink-0, no data-*
         assert "data-cookie-path" not in html
 
+    async def test_nothing_is_conveyed_by_colour(
+        self, spaces: None, web_client: AsyncClient
+    ) -> None:
+        """Spaces are told apart by name: no colour dots in the button, rows or badges."""
+        web_client.cookies.set(COOKIE_NAME, "a")
+        html = (await web_client.get("/")).text
+        assert "space-selector-dots" not in html
+        assert "data-space-dot" not in html
+        assert (
+            "background-color" not in html.split('id="space-selector"')[1].split("</details>")[0]
+        )
+
     @pytest.mark.parametrize(
-        ("cookie", "dots"),
-        [("", 0), ("a", 1), ("b", 1), ("a,b", 2), ("a,b,_unassigned", 0)],
+        ("cookie", "title"),
+        [
+            ("", "Filter every page by space"),
+            ("b", "Showing: Beta"),
+            ("a,b", "Showing: Alpha, Beta"),
+        ],
     )
-    async def test_button_dots_match_the_selection(
-        self, spaces: None, web_client: AsyncClient, cookie: str, dots: int
+    async def test_button_tooltip_names_the_selection(
+        self, spaces: None, web_client: AsyncClient, cookie: str, title: str
     ) -> None:
         web_client.cookies.set(COOKIE_NAME, cookie)
         html = (await web_client.get("/")).text
-        summary = html.split('id="space-selector-dots"')[1].split('id="space-selector-label"')[0]
-        assert summary.count("border-2 border-base-100") == dots
-
-    async def test_button_dots_use_the_selected_colour(
-        self, spaces: None, web_client: AsyncClient
-    ) -> None:
-        web_client.cookies.set(COOKIE_NAME, "a")
-        html = (await web_client.get("/")).text
-        summary = html.split('id="space-selector-dots"')[1].split('id="space-selector-label"')[0]
-        assert "#112233" in summary  # Alpha's colour, and only that
+        assert f'aria-label="Filter by space" title="{title}"' in html
 
     async def test_repo_detail_shows_space_badges(
         self, spaces: None, web_client: AsyncClient
@@ -326,3 +331,69 @@ class TestSelectorUI:
     async def test_repo_detail_has_no_badges_without_spaces(self, web_client: AsyncClient) -> None:
         set_spaces_config([])
         assert "Space: " not in (await web_client.get("/repo/acme/api")).text
+
+
+class TestFilterBar:
+    """The bar under the navbar that says what is filtered and how to undo it."""
+
+    async def test_absent_under_all(self, web_client: AsyncClient, spaces: None) -> None:
+        for cookie in ("", "a,b,_unassigned"):
+            web_client.cookies.set(COOKIE_NAME, cookie)
+            assert 'id="space-filter-bar"' not in (await web_client.get("/")).text
+
+    async def test_absent_without_configured_spaces(self, web_client: AsyncClient) -> None:
+        set_spaces_config([])
+        web_client.cookies.set(COOKIE_NAME, "a")
+        assert 'id="space-filter-bar"' not in (await web_client.get("/")).text
+
+    async def test_one_space(self, web_client: AsyncClient, spaces: None) -> None:
+        web_client.cookies.set(COOKIE_NAME, "b")  # only acme/frontend of the two cached repos
+        html = (await web_client.get("/")).text
+        bar = html.split('id="space-filter-bar"')[1].split("</nav>")[0]
+        assert "Showing" in bar and "Beta" in bar
+        assert "1 of 2 repositories" in bar
+        # removing the only chip leaves an empty value, which means All
+        assert 'href="?spaces="' in bar
+        assert 'aria-label="Remove Beta from the filter"' in bar
+
+    async def test_each_chip_removes_only_its_space(
+        self, web_client: AsyncClient, spaces: None
+    ) -> None:
+        web_client.cookies.set(COOKIE_NAME, "a,b,_unassigned")
+        web_client.cookies.set(COOKIE_NAME, "a,b")
+        html = (await web_client.get("/")).text
+        bar = html.split('id="space-filter-bar"')[1].split("</nav>")[0]
+        remove_a = bar.split('aria-label="Remove Alpha from the filter"')[0].rsplit("href=", 1)[1]
+        remove_b = bar.split('aria-label="Remove Beta from the filter"')[0].rsplit("href=", 1)[1]
+        assert remove_a.startswith('"?spaces=b"')
+        assert remove_b.startswith('"?spaces=a"')
+
+    async def test_the_links_apply_and_persist_the_new_selection(
+        self, web_client: AsyncClient, spaces: None
+    ) -> None:
+        web_client.cookies.set(COOKIE_NAME, "a,b")
+        resp = await web_client.get("/", params={"spaces": "b"})  # what the Alpha chip links to
+        assert 'aria-label="Remove Beta from the filter"' in resp.text
+        assert 'aria-label="Remove Alpha' not in resp.text
+        assert resp.headers["set-cookie"].startswith(f"{COOKIE_NAME}=b;")
+        cleared = await web_client.get("/", params={"spaces": ""})  # "Show all spaces"
+        assert 'id="space-filter-bar"' not in cleared.text
+        assert cleared.headers["set-cookie"].startswith(f"{COOKIE_NAME}=;")
+
+    async def test_present_on_every_page(self, web_client: AsyncClient, spaces: None) -> None:
+        web_client.cookies.set(COOKIE_NAME, "a")
+        for path in ("/", "/backlog", "/checks", "/actions", "/prs", "/repo/acme/api"):
+            assert 'id="space-filter-bar"' in (await web_client.get(path)).text, path
+
+    async def test_unassigned_is_a_chip_too(self, web_client: AsyncClient, spaces: None) -> None:
+        web_client.cookies.set(COOKIE_NAME, "_unassigned")
+        bar = (await web_client.get("/")).text.split('id="space-filter-bar"')[1].split("</nav>")[0]
+        assert "Unassigned" in bar and "1 of 2 repositories" in bar
+
+    async def test_singular_total(self, web_client: AsyncClient, spaces: None) -> None:
+        from grimoire.github.router import _repos
+
+        _repos.pop("acme/api")
+        web_client.cookies.set(COOKIE_NAME, "a")
+        bar = (await web_client.get("/")).text.split('id="space-filter-bar"')[1].split("</nav>")[0]
+        assert "1 of 1 repository" in bar and "repositories" not in bar

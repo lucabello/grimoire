@@ -172,9 +172,7 @@ class TestListSpaces:
     def _spaces() -> list[SpaceConfig]:
         source = [StaticRepoSource(repo="o/x")]
         return [
-            SpaceConfig(
-                id="a", name="Alpha", color="#112233", description="d", repositories=source
-            ),
+            SpaceConfig(id="a", name="Alpha", description="d", repositories=source),
             SpaceConfig(id="b", name="Beta", repositories=source),
         ]
 
@@ -185,10 +183,10 @@ class TestListSpaces:
     def test_counts_and_unassigned_entry(self) -> None:
         set_spaces_config(self._spaces(), lambda: [SHARED, SOLO, LOOSE])
         infos = list_spaces()
-        assert [(i.id, i.name, i.color, i.repo_count) for i in infos] == [
-            ("a", "Alpha", "#112233", 2),
-            ("b", "Beta", None, 1),
-            (UNASSIGNED, "Unassigned", None, 1),
+        assert [(i.id, i.name, i.repo_count) for i in infos] == [
+            ("a", "Alpha", 2),
+            ("b", "Beta", 1),
+            (UNASSIGNED, "Unassigned", 1),
         ]
         assert infos[0].description == "d"
 

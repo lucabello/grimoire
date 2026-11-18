@@ -158,7 +158,6 @@ repositories:
 spaces:
   - id: "platform"             # ^[a-z0-9][a-z0-9-]*$ ("_unassigned" is reserved)
     name: "Platform"
-    color: "#3366ff"           # optional "#rrggbb"
     description: "Platform team"
     repositories:              # same sources as above: repo / team, branches, workflows
       - repo: "owner/repo-name"

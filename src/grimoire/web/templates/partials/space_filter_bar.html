@@ -1,0 +1,17 @@
+{# Shown under the navbar while a space filter is active: says what is filtered and how to undo it.
+   Plain links (no script): each chip removes its space, "Show all spaces" clears the filter. #}
+{% if space_filter %}
+<nav id="space-filter-bar" aria-label="Active space filter" class="bg-base-100 border-b border-base-300">
+    <div class="container mx-auto px-4 py-2 max-w-7xl flex flex-wrap items-center gap-2 text-sm">
+        <span class="font-semibold">Showing</span>
+        {% for chip in space_filter.chips %}
+        <span class="badge badge-outline gap-2 py-3">
+            {{ chip.name }}
+            <a href="{{ chip.remove_href }}" class="link link-hover" aria-label="Remove {{ chip.name }} from the filter" title="Remove {{ chip.name }} from the filter"><i class="fa-solid fa-xmark" aria-hidden="true"></i></a>
+        </span>
+        {% endfor %}
+        <span>&middot; {{ space_filter.shown }} of {{ space_filter.total }} {{ "repository" if space_filter.total == 1 else "repositories" }}</span>
+        <a href="?spaces=" class="link ml-auto">Show all spaces</a>
+    </div>
+</nav>
+{% endif %}

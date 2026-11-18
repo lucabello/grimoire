@@ -7,7 +7,13 @@ from typing import Any
 
 from fastapi import Request, Response
 
-from grimoire.spaces import SpaceSelection, known_space_ids, list_spaces, parse_space_ids
+from grimoire.spaces import (
+    SpaceSelection,
+    count_repos,
+    known_space_ids,
+    list_spaces,
+    parse_space_ids,
+)
 
 COOKIE_NAME = "grimoire_spaces"
 COOKIE_MAX_AGE = 365 * 24 * 60 * 60
@@ -43,11 +49,41 @@ def html_space_selection(request: Request) -> SpaceSelection:
     return resolve_html_selection(request)
 
 
-def space_context(request: Request) -> dict[str, Any]:
-    """Template context: ``spaces`` (as ``GET /api/spaces``) and ``space_selection``."""
+def space_filter_bar(
+    selection: SpaceSelection, spaces: list[dict[str, Any]]
+) -> dict[str, Any] | None:
+    """Data of the active-filter bar, or None under All (nothing is filtered).
+
+    Every chip links to ``?spaces=`` with that space removed, so the bar needs no script: the
+    server applies the new selection and saves it in the cookie. Removing the last space
+    leaves an empty value, which means All.
+    """
+    if selection.ids is None:
+        return None
+    selected = [space for space in spaces if space["id"] in selection.ids]
+    shown, total = count_repos(selection)
     return {
-        "spaces": [space.model_dump() for space in list_spaces()],
-        "space_selection": resolve_html_selection(request),
+        "chips": [
+            {
+                "name": space["name"],
+                "remove_href": "?spaces="
+                + ",".join(other["id"] for other in selected if other is not space),
+            }
+            for space in selected
+        ],
+        "shown": shown,
+        "total": total,
+    }
+
+
+def space_context(request: Request) -> dict[str, Any]:
+    """Template context: ``spaces`` (as ``GET /api/spaces``), ``space_selection``, ``space_filter``."""
+    selection = resolve_html_selection(request)
+    spaces = [space.model_dump() for space in list_spaces()]
+    return {
+        "spaces": spaces,
+        "space_selection": selection,
+        "space_filter": space_filter_bar(selection, spaces),
     }
 
 
