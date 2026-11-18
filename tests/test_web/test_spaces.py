@@ -207,7 +207,7 @@ class TestSelectorUI:
         assert 'id="space-selector"' in html
         for space_id in ("a", "b", "_unassigned"):
             assert f'data-space-id="{space_id}"' in html
-        assert "saved in this browser" in html
+        assert "click a name to show only that one" in html
         assert 'id="space-search"' in html  # the dropdown can be searched
         assert 'data-space-row="alpha"' in html and 'data-space-row="beta"' in html
 
@@ -246,17 +246,20 @@ class TestSelectorUI:
         assert "checked" in row_b
         assert "checked" not in row_a
 
-    async def test_name_is_the_label_of_the_checkbox_and_only_is_separate(
+    async def test_checkbox_toggles_and_the_rest_of_the_row_shows_only_that_space(
         self, spaces: None, web_client: AsyncClient
     ) -> None:
         html = (await web_client.get("/")).text
         row = html.split('data-space-row="alpha"')[1].split("</li>")[0]
-        # clicking the name toggles the checkbox, like clicking the box itself
-        assert row.index("<label") < row.index('data-space-id="a"') < row.index("Alpha</span>")
-        assert row.index("Alpha</span>") < row.index("</label>")
-        # "only" is the one control that selects a single space, and the name is not one
+        # the label wraps just the checkbox: the individual toggle
+        label = row.split("<label")[1].split("</label>")[0]
+        assert 'data-space-id="a"' in label and "Alpha</span>" not in label
+        # name and count are inside the single button that selects only this space
+        button = row.split("<button")[1].split("</button>")[0]
+        assert 'data-space-only="a"' in button
+        assert "Alpha</span>" in button and "repo" in button
         assert row.count("data-space-only") == 1
-        assert ">only</button>" in row
+        assert ">only<" not in row  # no separate "only" link
 
     async def test_repo_counts_are_spelled_out(
         self, spaces: None, web_client: AsyncClient

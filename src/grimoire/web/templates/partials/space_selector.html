@@ -29,21 +29,23 @@
         <ul class="menu menu-sm p-0" id="space-list">
             {% for space in spaces %}
             <li data-space-row="{{ space.name | lower }}">
-                <div class="flex items-center gap-2 py-1 px-2" title="{{ space.description }}">
-                    {# The name is part of the checkbox's label: clicking it toggles the box. #}
-                    <label class="flex flex-1 items-center gap-2 min-w-0 cursor-pointer">
-                        <input type="checkbox" class="checkbox checkbox-xs" data-space-id="{{ space.id }}" data-name="{{ space.name }}"
+                <div class="flex items-stretch rounded hover:bg-base-200" title="{{ space.description }}">
+                    {# The checkbox is the individual toggle (its label only wraps the box, so the padding around it toggles too) #}
+                    <label class="flex items-center pl-2 pr-1 cursor-pointer">
+                        <input type="checkbox" class="checkbox checkbox-xs" data-space-id="{{ space.id }}" data-name="{{ space.name }}" aria-label="Include {{ space.name }}"
                                {% if selected_ids is none or space.id in selected_ids %}checked{% endif %}>
-                        <span class="truncate{% if space.id == '_unassigned' %} italic{% endif %}">{{ space.name }}</span>
                     </label>
-                    <span class="text-xs opacity-80 whitespace-nowrap">{{ space.repo_count }} {{ "repo" if space.repo_count == 1 else "repos" }}</span>
-                    <button type="button" class="link link-hover text-xs" data-space-only="{{ space.id }}" title="Show only {{ space.name }}">only</button>
+                    {# The rest of the row shows only this space #}
+                    <button type="button" class="flex flex-1 items-center justify-between gap-2 min-w-0 py-1 pl-1 pr-2 text-left" data-space-only="{{ space.id }}" title="Show only {{ space.name }}">
+                        <span class="truncate{% if space.id == '_unassigned' %} italic{% endif %}">{{ space.name }}</span>
+                        <span class="text-xs opacity-80 whitespace-nowrap">{{ space.repo_count }} {{ "repo" if space.repo_count == 1 else "repos" }}</span>
+                    </button>
                 </div>
             </li>
             {% endfor %}
         </ul>
         <div id="space-no-match" class="px-2 py-1 text-sm opacity-80 hidden">No matching spaces</div>
-        <div class="px-2 pt-1 text-xs opacity-80">saved in this browser</div>
+        <div class="px-2 pt-1 text-xs opacity-80">Tick to combine spaces, click a name to show only that one. Saved in this browser.</div>
     </div>
 </details>
 <script>
