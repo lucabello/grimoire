@@ -22,6 +22,7 @@ class CheckDefinition(BaseModel):
     schedule: str | None = None
     enabled: bool = True
     severity: Literal["warning", "error"] = "error"
+    spaces: list[str] = []  # listing only (never targeting); empty = listed under every space
 
 
 def load_checks(data_dir: Path) -> list[CheckDefinition]:

@@ -26,6 +26,9 @@ Slug uniqueness is enforced — duplicate filenames cause a startup error.
 | `schedule` | string (cron) | No | `refresh_schedule` | Custom cron schedule |
 | `enabled` | boolean | No | `true` | Whether the check runs on schedule |
 | `severity` | `"error"` \| `"warning"` | No | `"error"` | How failures appear on the dashboard and in the backlog |
+| `spaces` | list of strings | No | `[]` | Space ids under which the check is listed; empty = listed under every space |
+
+`spaces` only controls where the check is **listed** when you filter by space. It does not change which repositories the check runs against: `targets` alone decides that. Every id must be defined in the configuration's `spaces`, otherwise Grimoire refuses to start and names the check and the id.
 
 ## Target spec {: #target-spec }
 

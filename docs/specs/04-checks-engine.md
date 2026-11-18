@@ -25,6 +25,7 @@ script: |
 schedule: "0 */8 * * *"   # optional cron; omit to use default refresh interval
 enabled: true              # optional; default true
 severity: error            # optional; "error" (red, default) or "warning" (yellow)
+spaces: [platform]         # optional; space ids under which the check is listed; omit = global
 ```
 
 **Branch scoping.** `list` and `regex` include every observed branch of a matched repo. `script` is evaluated *per (repo, branch)*, so it doubles as the branch filter: return exit code 0 for branches the check should run against, non-zero for the rest. Branches not configured on the repository in `config.yaml` are never considered.
@@ -62,7 +63,12 @@ class CheckDefinition(BaseModel):
     schedule: str | None = None  # cron expression
     enabled: bool = True
     severity: Literal["warning", "error"] = "error"
+    spaces: list[str] = []  # listing only; never affects targeting
 ```
+
+### Spaces
+
+`spaces` lists the space ids (from `config.spaces`) under which the check is **listed** when the user filters by space. A check with no `spaces` is global and always listed. It never changes which repos the check runs against: `targets` alone decides that. After `load_checks`, the app lifespan calls `validate_definition_spaces("check", checks, {space ids})` (`grimoire/spaces.py`); an unknown id, or the pseudo-space `_unassigned`, raises `ValueError` naming the check slug and the id, with the same strictness as duplicate slugs.
 
 ### Severity
 
@@ -301,6 +307,7 @@ class CheckRunDetail(BaseModel):
 - [ ] Results are stored in the database
 - [ ] Scheduling works (default interval + custom cron)
 - [ ] Toggle persists across restarts (stored in DB)
+- [ ] `spaces` parses and defaults to `[]`; an unknown space id fails startup naming the check and the id; `spaces` does not change targeting
 - [ ] REST API endpoints return correct responses with proper status codes
 - [ ] `POST /api/checks/{slug}/run?repo=owner/repo` targets only the specified repo
 - [ ] Tests mock subprocess execution and workspace

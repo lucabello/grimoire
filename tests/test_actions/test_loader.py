@@ -32,6 +32,17 @@ class TestLoadActions:
         assert a.script == "uv lock"
         assert a.schedule == "0 0 * * 1"
 
+    def test_spaces_parsed_and_default_to_empty(self, tmp_path: Path) -> None:
+        actions_dir = tmp_path / "actions"
+        actions_dir.mkdir()
+        base = "description: d\ntargets:\n  regex: '.*'\nscript: 'true'\n"
+        (actions_dir / "scoped.yaml").write_text(f"name: Scoped\nspaces: [a]\n{base}")
+        (actions_dir / "global.yaml").write_text(f"name: Global\n{base}")
+
+        by_slug = {a.slug: a for a in load_actions(tmp_path)}
+        assert by_slug["scoped"].spaces == ["a"]
+        assert by_slug["global"].spaces == []
+
     def test_slug_derived_from_filename(self, tmp_path: Path) -> None:
         actions_dir = tmp_path / "actions"
         actions_dir.mkdir()

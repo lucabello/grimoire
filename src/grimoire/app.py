@@ -55,6 +55,7 @@ from grimoire.observability.metrics import DATA_REFRESH_DURATION, update_repo_me
 from grimoire.observability.metrics import router as metrics_router
 from grimoire.prs import router as prs_router
 from grimoire.prs import set_prs_config
+from grimoire.spaces import validate_definition_spaces
 from grimoire.web.router import router as web_router
 from grimoire.web.router import (
     set_backlog_config,
@@ -206,6 +207,9 @@ async def lifespan(_app: FastAPI) -> AsyncIterator[None]:
     # Checks & actions
     checks = load_checks(config.data_dir)
     actions = load_actions(config.data_dir)
+    space_ids = {space.id for space in config.spaces}
+    validate_definition_spaces("check", checks, space_ids)
+    validate_definition_spaces("action", actions, space_ids)
 
     # Restore persisted toggle state from DB
     await restore_check_toggles(engine, checks)

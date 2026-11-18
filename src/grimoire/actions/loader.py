@@ -20,6 +20,7 @@ class ActionDefinition(BaseModel):
     script: str
     schedule: str | None = None  # cron expression; None = manual-only
     enabled: bool = True
+    spaces: list[str] = []  # listing only (never targeting); empty = listed under every space
 
 
 def load_actions(data_dir: Path) -> list[ActionDefinition]:
