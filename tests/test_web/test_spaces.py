@@ -210,6 +210,8 @@ class TestSelectorUI:
         for space_id in ("a", "b", "_unassigned"):
             assert f'data-space-id="{space_id}"' in html
         assert "saved in this browser" in html
+        assert 'id="space-search"' in html  # the dropdown can be searched
+        assert 'data-space-row="alpha"' in html and 'data-space-row="beta"' in html
 
     async def test_unassigned_row_only_when_offered(
         self, spaces: None, web_client: AsyncClient
@@ -234,7 +236,7 @@ class TestSelectorUI:
     ) -> None:
         web_client.cookies.set(COOKIE_NAME, cookie)
         html = (await web_client.get("/")).text
-        assert f'<span id="space-selector-label">{label}</span>' in html
+        assert f'id="space-selector-label" class="whitespace-nowrap">{label}</span>' in html
 
     async def test_checked_boxes_follow_the_selection(
         self, spaces: None, web_client: AsyncClient

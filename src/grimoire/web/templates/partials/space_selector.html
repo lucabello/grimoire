@@ -10,14 +10,15 @@
 {% else %}
     {% set label = selected[0].name ~ " +" ~ (selected | length - 1) %}
 {% endif %}
-<div class="dropdown" id="space-selector" data-cookie-path="{{ base_path or '/' }}">
-    <div tabindex="0" role="button" class="btn btn-ghost btn-sm gap-2 normal-case" aria-haspopup="true" aria-label="Filter by space">
+<div class="dropdown shrink-0" id="space-selector" data-cookie-path="{{ base_path or '/' }}">
+    <div tabindex="0" role="button" class="btn btn-outline btn-sm gap-2 normal-case whitespace-nowrap flex-nowrap" aria-haspopup="true" aria-label="Filter by space" title="Filter every page by space">
+        <i class="fa-solid fa-layer-group text-xs opacity-70"></i>
         <span class="flex items-center">
             {% for space in selected[:3] %}
             <span class="-ml-1 first:ml-0 rounded-full ring-2 ring-base-100 inline-flex">{{ space_dot(space.color, space.id == "_unassigned") }}</span>
             {% endfor %}
         </span>
-        <span id="space-selector-label">{{ label }}</span>
+        <span id="space-selector-label" class="whitespace-nowrap">{{ label }}</span>
         <i class="fa-solid fa-chevron-down text-xs opacity-60"></i>
     </div>
     <div tabindex="0" class="dropdown-content z-30 mt-1 w-72 rounded-box bg-base-100 border border-base-300 shadow-xl p-2">
@@ -28,9 +29,10 @@
                 <button type="button" class="link link-hover" data-space-action="none">None</button>
             </span>
         </div>
-        <ul class="menu menu-sm p-0">
+        <input type="search" id="space-search" class="input input-bordered input-sm w-full my-1" placeholder="Search spaces" aria-label="Search spaces" autocomplete="off">
+        <ul class="menu menu-sm p-0" id="space-list">
             {% for space in spaces %}
-            <li class="group">
+            <li class="group" data-space-row="{{ space.name | lower }}">
                 <div class="flex items-center gap-2 py-1 px-2 {% if space.id == '_unassigned' %}opacity-70{% endif %}" title="{{ space.description }}">
                     <input type="checkbox" class="checkbox checkbox-xs" data-space-id="{{ space.id }}" aria-label="{{ space.name }}"
                            {% if selected_ids is none or space.id in selected_ids %}checked{% endif %}>
@@ -42,6 +44,7 @@
             </li>
             {% endfor %}
         </ul>
+        <div id="space-no-match" class="px-2 py-1 text-sm opacity-60 hidden">No matching spaces</div>
         <div class="px-2 pt-1 text-xs opacity-50">saved in this browser</div>
     </div>
 </div>
@@ -64,6 +67,21 @@
         boxes.forEach(b => { b.checked = ids.includes(b.dataset.spaceId); });
         saveCookie();
     }
+
+    // Search narrows the rows only; All / None and the selection keep applying to every space.
+    const search = document.getElementById('space-search');
+    const rows = Array.from(root.querySelectorAll('[data-space-row]'));
+    const noMatch = document.getElementById('space-no-match');
+    search.addEventListener('input', () => {
+        const q = search.value.trim().toLowerCase();
+        let shown = 0;
+        rows.forEach(row => {
+            const match = !q || row.dataset.spaceRow.includes(q);
+            row.classList.toggle('hidden', !match);
+            if (match) shown += 1;
+        });
+        noMatch.classList.toggle('hidden', shown > 0);
+    });
 
     boxes.forEach(b => b.addEventListener('change', saveCookie));
     root.querySelectorAll('[data-space-only]').forEach(el => {
