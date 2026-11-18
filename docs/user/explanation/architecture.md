@@ -84,9 +84,9 @@ A **space** is a named slice of the tracked repositories, for example the reposi
 Spaces are a **view filter**, not isolation. There is one GitHub token, one git identity, one workspace, one database, one cache and one scheduler for everything. A repository that belongs to several spaces is fetched and cloned once. Display settings (`staleness`, `backlog`, `dashboard`, `prs`, `refresh_schedule`) are global.
 
 - **Membership.** Each source that lists a repository (the top-level `repositories` or a space) is one *membership* of that repository. Branches are merged across memberships, and each membership carries its own workflow filters. Repositories with no space are **Unassigned**.
-- **Selection.** The selector in the navigation bar picks any number of spaces; none, or all of them, means All. The web pages keep the choice in the `grimoire_spaces` cookie for a year, and `?spaces=` on a page applies and saves a choice. The JSON API reads only `?spaces=` and never the cookie, so API results do not depend on who asks.
+- **Selection.** The selector in the navigation bar picks any number of spaces. Selecting none, or every entry the selector lists (including **Unassigned** when it is offered), means All. The web pages keep the choice in the `grimoire_spaces` cookie for a year, and `?spaces=` on a page applies and saves a choice. The JSON API reads only `?spaces=` and never the cookie, so API results do not depend on who asks.
 - **What it filters.** The dashboard, backlog, checks, actions and PRs pages, and the matching APIs. It never changes what runs: a check or action's `targets` still decide its repositories, and `spaces` on a check or action only decides where it is listed.
-- **Metrics.** `grimoire_repository_space_info{repo,space}` carries the memberships; the other series are unchanged. See `METRICS.md` in the repository.
+- **Metrics.** `grimoire_repository_space_info{repo,space}` carries the memberships; the other series are unchanged. See the [metrics reference on GitHub](https://github.com/lucabello/grimoire/blob/main/METRICS.md#spaces).
 
 Whoever can edit the configuration, a space file, or the check and action scripts can affect the whole instance. See [Host Grimoire for several teams](../how-to/host-for-several-teams.md).
 
