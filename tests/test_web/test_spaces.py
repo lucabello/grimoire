@@ -248,16 +248,40 @@ class TestSelectorUI:
         assert "checked" in row_b
         assert "checked" not in row_a
 
-    async def test_cookie_path_follows_root_path(
+    async def test_cookie_is_written_with_the_root_path(
         self, spaces: None, web_client_with_root_path: AsyncClient
     ) -> None:
         html = (await web_client_with_root_path.get("/")).text
-        assert 'data-cookie-path="/grimoire"' in html
+        assert 'const BASE_PATH = "/grimoire";' in html
+        assert "Path=' +\n            (BASE_PATH || '/') + '; SameSite=Lax" in html
 
-    async def test_cookie_path_is_slash_without_root_path(
+    async def test_markup_avoids_what_some_browsers_hide(
         self, spaces: None, web_client: AsyncClient
     ) -> None:
-        assert 'data-cookie-path="/"' in (await web_client.get("/")).text
+        """A user's browser hid a wrapper with `shrink-0` / `data-cookie-path`; keep it a <details>."""
+        html = (await web_client.get("/")).text
+        assert '<details class="dropdown" id="space-selector">' in html  # no shrink-0, no data-*
+        assert "data-cookie-path" not in html
+
+    @pytest.mark.parametrize(
+        ("cookie", "dots"),
+        [("", 0), ("a", 1), ("b", 1), ("a,b", 2), ("a,b,_unassigned", 0)],
+    )
+    async def test_button_dots_match_the_selection(
+        self, spaces: None, web_client: AsyncClient, cookie: str, dots: int
+    ) -> None:
+        web_client.cookies.set(COOKIE_NAME, cookie)
+        html = (await web_client.get("/")).text
+        summary = html.split('id="space-selector-dots"')[1].split('id="space-selector-label"')[0]
+        assert summary.count("border-2 border-base-100") == dots
+
+    async def test_button_dots_use_the_selected_colour(
+        self, spaces: None, web_client: AsyncClient
+    ) -> None:
+        web_client.cookies.set(COOKIE_NAME, "a")
+        html = (await web_client.get("/")).text
+        summary = html.split('id="space-selector-dots"')[1].split('id="space-selector-label"')[0]
+        assert "#112233" in summary  # Alpha's colour, and only that
 
     async def test_repo_detail_shows_space_badges(
         self, spaces: None, web_client: AsyncClient
