@@ -11,7 +11,7 @@ from grimoire.models import RepositoryStats, TrackedRepository, WorkflowStatus
 
 
 def _make_repo(name: str = "owner/repo") -> TrackedRepository:
-    return TrackedRepository(full_name=name, branches=["main"], sources=[name])
+    return TrackedRepository(full_name=name, branches=["main"], source=name)
 
 
 def _make_stats(name: str = "owner/repo", fetched_at: datetime | None = None) -> RepositoryStats:

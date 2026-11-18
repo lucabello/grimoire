@@ -61,27 +61,26 @@ git:  # entire section is optional (only needed if actions commit/push)
     format: "ssh"             # "ssh" | "gpg"
   ssh_known_hosts: "/keys/known_hosts"  # optional
 
-teams:                          # mandatory; at least one team
-  - id: "my-team"               # unique, [A-Za-z0-9_-]
-    label: "My Team"            # optional display name, defaults to id
-    github: "my-org/my-team"    # all non-archived repos visible to this GitHub team
-    exclude:                    # applies to github listing and repositories
+repositories:
+  # Static list with optional branches
+  - repo: "lucabello/grimoire"
+    branches: ["main", "develop"]
+  - repo: "lucabello/other-repo"
+    # omitting branches → default branch only
+    # non-existing branches are silently ignored (no warnings generated)
+
+  # Workflow filtering (glob patterns on workflow name)
+  - repo: "lucabello/filtered-repo"
+    workflows:
+      include: ["CI", "Tests *"]   # only track matching workflows
+      exclude: ["Publish *"]       # then exclude matching (applied after include)
+
+  # From a GitHub team
+  - team: "my-org/my-team"
+    exclude:
       - "my-org/deprecated-repo"
     workflows:
-      exclude: ["Nightly *"]    # applies to all github team repos
-    repositories:               # optional explicit extra repos
-      # Static list with optional branches
-      - repo: "lucabello/grimoire"
-        branches: ["main", "develop"]
-      - repo: "lucabello/other-repo"
-        # omitting branches → default branch only
-        # non-existing branches are silently ignored (no warnings generated)
-
-      # Workflow filtering (glob patterns on workflow name)
-      - repo: "lucabello/filtered-repo"
-        workflows:
-          include: ["CI", "Tests *"]   # only track matching workflows
-          exclude: ["Publish *"]       # then exclude matching (applied after include)
+      exclude: ["Nightly *"]      # applies to all repos from this team
 
 backlog:                        # optional — backlog scoring weights
   category_weights:
@@ -139,9 +138,9 @@ log_file: "./grimoire.log"
 - `SigningConfig(key_path: Path, format: Literal["ssh", "gpg"])`
 - `GitConfig(user: GitUserConfig, signing: SigningConfig | None = None, ssh_known_hosts: Path | None = None)`
 - `StaticRepoSource(repo: str, branches: list[str] = [], workflows: WorkflowFilter = WorkflowFilter())`
-- `TeamConfig(id: str, label: str | None = None, github: str | None = None, exclude: list[str] = [], workflows: WorkflowFilter = WorkflowFilter(), repositories: list[StaticRepoSource] = [])` — `id` is unique and mandatory; `github` (`org/team-slug`) or at least one `repositories` entry is required; `label` defaults to `id`; `exclude` applies to both the GitHub listing and explicit repositories; `workflows` applies to GitHub team repos
+- `TeamRepoSource(team: str, exclude: list[str] = [], workflows: WorkflowFilter = WorkflowFilter())`
 - `WorkflowFilter(include: list[str] = [], exclude: list[str] = [])` — glob patterns (fnmatch) on workflow name
-- `GrimoireConfig.teams: list[TeamConfig]` — at least one team; duplicate ids are rejected
+- `RepoSource` — discriminated union of the above (by field presence)
 - `StalenessConfig(pull_requests_days: int = 30, issues_days: int = 365, problematic_stale_issues_pct: int = 20, problematic_stale_prs_pct: int = 20)`
 - `BacklogCategoryWeights(failing_workflow: float = 100, failing_check_error: float = 80, failing_check_warning: float = 30, stale_pr: float = 50, stale_issue: float = 20)`
 - `RepositoryWeightRule(regex: str | None = None, repos: list[str] | None = None, weight: float = 1.0)` — exactly one of `regex` or `repos` must be set; rules are evaluated top-to-bottom and the last match wins
@@ -181,7 +180,7 @@ Pydantic models for domain concepts (not DB models — those come in 1.4):
 class TrackedRepository(BaseModel):
     full_name: str          # "owner/repo"
     branches: list[str]     # branches to observe; empty = default branch only
-    sources: list[str]      # "team:<id>" labels (multi-team OK)
+    source: str             # "static" | "team:org/team-name"
 
 class WorkflowStatus(BaseModel):
     name: str

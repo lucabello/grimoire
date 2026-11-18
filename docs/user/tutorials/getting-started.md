@@ -23,10 +23,8 @@ Open `config.yaml` and set your token and the repositories you want to monitor:
 github:
   token: "${GITHUB_TOKEN}"   # or a literal token
 
-teams:
-  - id: "my-team"
-    repositories:
-      - repo: "your-org/your-repo"
+repositories:
+  - repo: "your-org/your-repo"
 ```
 
 ## Step 2 — Start Grimoire

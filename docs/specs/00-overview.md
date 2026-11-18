@@ -125,28 +125,27 @@ git:
     format: "ssh"  # "ssh" or "gpg"
   ssh_known_hosts: "/keys/known_hosts"
 
-# Teams to track (each team needs `github` and/or `repositories`)
-teams:
-  - id: "backend"
-    label: "Backend"                 # optional display name, defaults to id
-    github: "org-name/team-slug"     # all non-archived repos visible to this GitHub team
-    exclude:                         # applies to github listing and repositories
+# Repositories to track
+repositories:
+  # Individual repo with specific branches
+  - repo: "owner/repo-name"
+    branches: ["main", "develop"]
+
+  # Individual repo (default branch only)
+  - repo: "owner/another-repo"
+
+  # Workflow filtering (include/exclude with glob patterns)
+  - repo: "owner/filtered-repo"
+    workflows:
+      include: ["CI", "Tests *"]   # only track these workflows
+      exclude: ["Publish *"]       # exclude these (applied after include)
+
+  # All repos from a GitHub team (archived repos are always excluded)
+  - team: "org-name/team-slug"
+    exclude:
       - "org-name/excluded-repo"
     workflows:
-      exclude: ["Release *"]         # applies to all github team repos
-    repositories:                    # optional explicit extra repos
-      # Individual repo with specific branches
-      - repo: "owner/repo-name"
-        branches: ["main", "develop"]
-
-      # Individual repo (default branch only)
-      - repo: "owner/another-repo"
-
-      # Workflow filtering (include/exclude with glob patterns)
-      - repo: "owner/filtered-repo"
-        workflows:
-          include: ["CI", "Tests *"]   # only track these workflows
-          exclude: ["Publish *"]       # exclude these (applied after include)
+      exclude: ["Release *"]       # applies to all repos from this team
 
 # PRs page: named groups of the open PRs of the tracked repos (with their CI state)
 prs:

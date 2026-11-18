@@ -17,7 +17,7 @@ from sqlalchemy import text
 from sqlmodel import select
 from sqlmodel.ext.asyncio.session import AsyncSession
 
-from grimoire.config import DashboardConfig, StalenessConfig, TeamConfig
+from grimoire.config import DashboardConfig, StalenessConfig
 from grimoire.database import ActionRunRecord
 from grimoire.models import TrackedRepository, WorkflowStatus
 from grimoire.prs import (
@@ -153,16 +153,6 @@ def set_refresh_schedule(schedule: str) -> None:
     _refresh_schedule = schedule
 
 
-# Configured teams — set from app lifespan
-_teams: list[TeamConfig] = []
-
-
-def set_teams(teams: list[TeamConfig]) -> None:
-    """Register the configured teams for the dashboard and backlog filters."""
-    global _teams  # noqa: PLW0603
-    _teams = list(teams)
-
-
 # ---------------------------------------------------------------------------
 # View-model dataclass for template rendering
 # ---------------------------------------------------------------------------
@@ -174,7 +164,7 @@ class RepoViewModel:
 
     full_name: str
     branches: list[str]
-    sources: list[str]
+    source: str
     open_issues: int
     stale_issues: int
     open_prs: int
@@ -191,10 +181,6 @@ class RepoViewModel:
     total_branches: int = 0
     include_checks: bool = True
     include_stale: bool = True
-
-    @property
-    def source(self) -> str:
-        return self.sources[0] if self.sources else ""
 
     @property
     def has_problems(self) -> bool:
@@ -554,7 +540,7 @@ async def _build_repo_viewmodels(
             RepoViewModel(
                 full_name=full_name,
                 branches=branches,
-                sources=list(repo.sources),
+                source=repo.source,
                 open_issues=stats.open_issues,
                 stale_issues=stats.stale_issues,
                 open_prs=stats.open_pull_requests,
@@ -576,44 +562,6 @@ async def _build_repo_viewmodels(
     return viewmodels
 
 
-def _normalize_team_filter(team: str | None) -> str | None:
-    """Return a team id for filtering, or ``None`` for no filter."""
-    if team is None:
-        return None
-    value = team.strip()
-    if not value or value.lower() == "all":
-        return None
-    if value.startswith("team:"):
-        value = value[5:]
-    return value or None
-
-
-def _sources_match_team(sources: list[str], team: str | None) -> bool:
-    """Return True if *sources* contain the team filter (or the filter is unset)."""
-    normalized = _normalize_team_filter(team)
-    if normalized is None:
-        return True
-    return f"team:{normalized}" in sources
-
-
-@dataclass(frozen=True)
-class TeamFilterOption:
-    """One entry in the dashboard / backlog team filter dropdown."""
-
-    value: str  # team id used in ``?team=``
-    label: str  # display name from config
-
-
-def _available_teams() -> list[TeamFilterOption]:
-    """Team filter options for the dropdowns, in config order."""
-    return [TeamFilterOption(value=team.id, label=team.display_name) for team in _teams]
-
-
-def _filter_repos_by_team(repos: list[RepoViewModel], team: str | None) -> list[RepoViewModel]:
-    """Keep repos belonging to the team id ``team``."""
-    return [r for r in repos if _sources_match_team(r.sources, team)]
-
-
 # ---------------------------------------------------------------------------
 # Routes
 # ---------------------------------------------------------------------------
@@ -626,7 +574,6 @@ async def dashboard(
     dir: str = "asc",
     include_checks: bool = True,
     include_stale: bool = True,
-    team: str | None = None,
 ) -> HTMLResponse:
     """Dashboard page — lists all tracked repositories."""
     from grimoire.github.router import _last_refresh
@@ -635,13 +582,10 @@ async def dashboard(
     refresh_running = is_refresh_running()
     refresh_progress = get_refresh_progress()
 
-    all_repos = await _build_repo_viewmodels(include_checks, include_stale)
-    available_teams = _available_teams()
-    team_filter = _normalize_team_filter(team)
-    repos = _filter_repos_by_team(all_repos, team_filter)
+    repos = await _build_repo_viewmodels(include_checks, include_stale)
 
     # Initial loading state: no repos yet and a refresh is in progress
-    if not all_repos and refresh_running:
+    if not repos and refresh_running:
         return templates.TemplateResponse(
             request,
             "loading.html",
@@ -678,9 +622,6 @@ async def dashboard(
             "dir": dir,
             "include_checks": include_checks,
             "include_stale": include_stale,
-            "team": team_filter or "",
-            "available_teams": available_teams,
-            "has_tracked_repos": bool(all_repos),
             "sort_labels": SORT_LABELS,
             "workflow_column_names": workflow_column_names(),
             "staleness": _staleness_config,
@@ -970,15 +911,10 @@ async def prs_partial(
 
 
 async def _build_sorted_repos(
-    sort: str,
-    direction: str,
-    include_checks: bool = True,
-    include_stale: bool = True,
-    team: str | None = None,
+    sort: str, direction: str, include_checks: bool = True, include_stale: bool = True
 ) -> list[RepoViewModel]:
-    """Build, filter by team, and sort repo view models."""
+    """Build and sort repo view models (shared by all dashboard partials)."""
     repos = await _build_repo_viewmodels(include_checks, include_stale)
-    repos = _filter_repos_by_team(repos, team)
     return _sort_repos(repos, sort, direction)
 
 
@@ -989,11 +925,9 @@ async def dashboard_matrix_partial(
     dir: str = "asc",
     include_checks: bool = True,
     include_stale: bool = True,
-    team: str | None = None,
 ) -> HTMLResponse:
     """Return the compact matrix view for HTMX swap."""
-    team_filter = _normalize_team_filter(team)
-    repos = await _build_sorted_repos(sort, dir, include_checks, include_stale, team_filter)
+    repos = await _build_sorted_repos(sort, dir, include_checks, include_stale)
     return templates.TemplateResponse(
         request,
         "partials/dashboard_matrix.html",
@@ -1003,7 +937,6 @@ async def dashboard_matrix_partial(
             "dir": dir,
             "include_checks": include_checks,
             "include_stale": include_stale,
-            "team": team_filter or "",
             "workflow_column_names": workflow_column_names(),
             "staleness": _staleness_config,
             "time_ago": _time_ago,
@@ -1018,11 +951,9 @@ async def dashboard_list_partial(
     dir: str = "asc",
     include_checks: bool = True,
     include_stale: bool = True,
-    team: str | None = None,
 ) -> HTMLResponse:
     """Return the compact list view for HTMX swap."""
-    team_filter = _normalize_team_filter(team)
-    repos = await _build_sorted_repos(sort, dir, include_checks, include_stale, team_filter)
+    repos = await _build_sorted_repos(sort, dir, include_checks, include_stale)
     return templates.TemplateResponse(
         request,
         "partials/dashboard_list.html",
@@ -1039,12 +970,9 @@ async def dashboard_stats_partial(
     request: Request,
     include_checks: bool = True,
     include_stale: bool = True,
-    team: str | None = None,
 ) -> HTMLResponse:
     """Return the stats bar for HTMX swap, respecting the health-status toggle."""
-    team_filter = _normalize_team_filter(team)
     repos = await _build_repo_viewmodels(include_checks, include_stale)
-    repos = _filter_repos_by_team(repos, team_filter)
     totals = _compute_totals(repos)
     return templates.TemplateResponse(
         request,
@@ -1606,7 +1534,6 @@ async def _build_backlog_items(
     min_score: float = 0.0,
     config_override: BacklogConfig | None = None,
     search: str = "",
-    team: str | None = None,
 ) -> list[BacklogItem]:
     """Collect and optionally filter backlog items."""
     from grimoire.github.router import _cache, _repos
@@ -1636,15 +1563,6 @@ async def _build_backlog_items(
         repo_set = set(repos_filter)
         items = [i for i in items if i.repo_full_name in repo_set]
 
-    team_filter = _normalize_team_filter(team)
-    if team_filter is not None:
-        items = [
-            i
-            for i in items
-            if (repo := _repos.get(i.repo_full_name)) is not None
-            and _sources_match_team(list(repo.sources), team_filter)
-        ]
-
     if min_score > 0:
         items = [i for i in items if i.score >= min_score]
 
@@ -1662,27 +1580,20 @@ async def _build_backlog_items(
     return items
 
 
-def _backlog_summary_context(items: list[BacklogItem]) -> dict[str, Any]:
-    """Compute header summary counts for a filtered backlog item list."""
-    tier_counts: dict[str, int] = {}
-    for item in items:
-        tier_counts[item.tier] = tier_counts.get(item.tier, 0) + 1
-    return {
-        "tier_counts": tier_counts,
-        "total_items": len(items),
-        "repos_with_items": len({i.repo_full_name for i in items}),
-    }
-
-
 @router.get("/backlog", response_class=HTMLResponse)
-async def backlog_page(request: Request, team: str | None = None) -> HTMLResponse:
+async def backlog_page(request: Request) -> HTMLResponse:
     """Backlog page — prioritised problem list across all repos."""
     from grimoire.github.router import _last_refresh
 
-    team_filter = _normalize_team_filter(team)
-    available_teams = _available_teams()
-    items = await _build_backlog_items(team=team_filter)
-    summary = _backlog_summary_context(items)
+    items = await _build_backlog_items()
+
+    # Build summary counts per tier
+    tier_counts: dict[str, int] = {}
+    for item in items:
+        tier_counts[item.tier] = tier_counts.get(item.tier, 0) + 1
+
+    # Count unique repos with problems
+    repos_with_items = len({i.repo_full_name for i in items})
 
     # Check if grouped view was requested (via query param)
     group_by = request.query_params.get("group_by", "")
@@ -1701,12 +1612,12 @@ async def backlog_page(request: Request, team: str | None = None) -> HTMLRespons
             "groups": groups,
             "type_groups": type_groups,
             "group_by": group_by,
-            **summary,
+            "tier_counts": tier_counts,
+            "total_items": len(items),
+            "repos_with_items": repos_with_items,
             "backlog_config": _backlog_config,
             "time_ago": _time_ago,
             "last_refresh": _last_refresh,
-            "team": team_filter or "",
-            "available_teams": available_teams,
         },
     )
 
@@ -1719,7 +1630,6 @@ async def backlog_items_partial(
     min_score: float = 0.0,
     group_by: str = "",
     search: str = "",
-    team: str | None = None,
     w_failing_workflow: float = -1,
     w_failing_check_error: float = -1,
     w_failing_check_warning: float = -1,
@@ -1755,7 +1665,6 @@ async def backlog_items_partial(
         min_score=min_score,
         config_override=config_override,
         search=search,
-        team=team,
     )
 
     groups = None
@@ -1773,7 +1682,6 @@ async def backlog_items_partial(
             "groups": groups,
             "type_groups": type_groups,
             "time_ago": _time_ago,
-            **_backlog_summary_context(items),
         },
     )
 
@@ -1784,7 +1692,6 @@ async def backlog_export_markdown(
     categories: str = "",
     repos: str = "",
     min_score: float = 0.0,
-    team: str | None = None,
 ) -> PlainTextResponse:
     """Export the backlog as Markdown text."""
     cat_list = [c for c in categories.split(",") if c] or None
@@ -1794,7 +1701,6 @@ async def backlog_export_markdown(
         categories=cat_list,
         repos_filter=repo_list,
         min_score=min_score,
-        team=team,
     )
     md = export_markdown(items)
     return PlainTextResponse(md, media_type="text/markdown")

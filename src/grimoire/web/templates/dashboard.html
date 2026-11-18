@@ -34,7 +34,7 @@
 </div>
 {% endif %}
 
-{% if has_tracked_repos %}
+{% if repos %}
 
 {# ── Stats Bar ─────────────────────────────────────────────────────── #}
 {% include "partials/dashboard_stats.html" %}
@@ -54,16 +54,6 @@
             {% endif %}
         </button>
         {% endfor %}
-        {% if available_teams %}
-        <span class="text-sm opacity-60 ml-2">Team:</span>
-        <select id="team-filter" class="select select-xs select-bordered max-w-xs"
-                onchange="setTeamFilter(this.value)">
-            <option value="" {% if not team %}selected{% endif %}>All</option>
-            {% for t in available_teams %}
-            <option value="{{ t.value }}" {% if team == t.value %}selected{% endif %}>{{ t.label }}</option>
-            {% endfor %}
-        </select>
-        {% endif %}
     </div>
     <div class="flex items-center gap-2">
         <div class="join" id="view-switcher">
@@ -95,16 +85,9 @@
 </div>
 
 {# ── Repo Grid ────────────────────────────────────────────────────── #}
-{% if repos %}
 <div id="repo-grid" class="hidden">
     {% include "partials/dashboard_matrix.html" %}
 </div>
-{% else %}
-<div id="repo-grid" class="alert alert-info shadow-sm">
-    <i class="fa-solid fa-filter shrink-0"></i>
-    <span>No repositories match the selected team filter.</span>
-</div>
-{% endif %}
 
 {% else %}
 {# ── Empty State ───────────────────────────────────────────────────── #}
@@ -121,7 +104,6 @@
 </div>
 {% endif %}
 
-{% if has_tracked_repos %}
 <script>
     const VIEW_PARTIALS = {
         matrix: BASE_PATH + '/partials/dashboard-matrix',
@@ -134,7 +116,6 @@
     if (!(currentView in VIEW_PARTIALS)) currentView = 'matrix';
     let currentSort = '{{ sort }}';
     let currentDir  = '{{ dir }}';
-    let currentTeam = '{{ team }}';
 
     function getHealthFlag(key) {
         const stored = localStorage.getItem(key);
@@ -164,23 +145,7 @@
     }
 
     function healthQuery() {
-        let q = '&include_checks=' + includeChecks + '&include_stale=' + includeStale;
-        if (currentTeam) {
-            q += '&team=' + encodeURIComponent(currentTeam);
-        }
-        return q;
-    }
-
-    function setTeamFilter(team) {
-        currentTeam = team || '';
-        const url = new URL(window.location.href);
-        if (currentTeam) {
-            url.searchParams.set('team', currentTeam);
-        } else {
-            url.searchParams.delete('team');
-        }
-        window.history.replaceState({}, '', url);
-        refreshAll();
+        return '&include_checks=' + includeChecks + '&include_stale=' + includeStale;
     }
 
     function fetchView() {
@@ -189,8 +154,7 @@
     }
 
     function fetchStats() {
-        const url = STATS_PARTIAL + '?include_checks=' + includeChecks + '&include_stale=' + includeStale
-            + (currentTeam ? '&team=' + encodeURIComponent(currentTeam) : '');
+        const url = STATS_PARTIAL + '?include_checks=' + includeChecks + '&include_stale=' + includeStale;
         return htmx.ajax('GET', url, '#stats-bar');
     }
 
@@ -248,14 +212,11 @@
             });
         }
 
-        const grid = document.getElementById('repo-grid');
-        if (grid && grid.classList.contains('hidden')) {
-            const needsCorrection = currentView !== 'matrix' || !includeChecks || !includeStale;
-            if (!needsCorrection) {
-                grid.classList.remove('hidden');
-            } else {
-                refreshAll().then(() => grid.classList.remove('hidden'));
-            }
+        const needsCorrection = currentView !== 'matrix' || !includeChecks || !includeStale;
+        if (!needsCorrection) {
+            document.getElementById('repo-grid').classList.remove('hidden');
+        } else {
+            refreshAll().then(() => document.getElementById('repo-grid').classList.remove('hidden'));
         }
     });
 
@@ -265,5 +226,4 @@
         refreshAll();
     });
 </script>
-{% endif %}
 {% endblock %}

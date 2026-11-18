@@ -94,13 +94,13 @@ async def resolve_repositories(
     config: GrimoireConfig, client: GitHubClient
 ) -> list[TrackedRepository]:
     """
-    For each team in config.teams:
-      - team.github set: fetch the GitHub team's repos, exclude listed repos,
-        filter out archived repos.
-      - team.repositories: validate each repo exists, resolve default branch
-        if no branches specified. Repos listed in team.exclude are skipped.
-    Deduplicate by full_name (merge branches **and** `sources` labels if
-    the same repo appears in multiple config entries).
+    For each entry in config.repositories:
+      - StaticRepoSource: validate repo exists, resolve default branch if
+        no branches specified.
+      - TeamRepoSource: fetch team repos, exclude listed repos, filter out
+        archived repos.
+    Deduplicate by full_name (merge branches if same repo appears in
+    multiple sources).
     Always filter out archived repositories.
     """
 
@@ -204,7 +204,7 @@ Expose cached repository data and a manual refresh trigger via REST endpoints.
 `refresh_all_stats()` maintains an in-memory `RefreshProgress(completed, total)` dataclass during execution. Each completed repo increments `completed`. The progress is cleared (set to `None`) in a `finally` block when the refresh finishes or fails.
 
 The initial `total` is computed from config before any async work:
-- Repos from `team.repositories` are counted directly from config; team GitHub repos are counted after the DB cache loads.
+- Static repos are counted directly from `config.repositories`.
 - After the DB cache loads (fast), the estimate is refined with the cached repo count (covers team repos from previous refreshes).
 - After `resolve_repositories()` returns, the total is set to the exact count.
 
@@ -223,8 +223,7 @@ class RepoSummary(BaseModel):
     full_name: str
     default_branch: str
     branches: list[str]
-    sources: list[str]              # "team:<id>" labels (multi-team OK)
-    source: str                     # primary sources[0] (compat)
+    source: str                     # "static" | "team:org/team-name"
     open_issues: int
     stale_issues: int
     open_pull_requests: int
@@ -244,7 +243,6 @@ class RepoDetailResponse(BaseModel):
     full_name: str
     default_branch: str
     branches: list[str]
-    sources: list[str]
     source: str
     open_issues: int
     stale_issues: list[IssueResponse]
@@ -303,7 +301,6 @@ class RefreshResponse(BaseModel):
 - [ ] `GET /api/repos/{owner}/{name}` returns 404 for untracked repos
 - [ ] `POST /api/refresh` returns 202 and triggers a background refresh
 - [ ] `resolve_repositories` correctly handles static repos, team repos, exclusions, and archived filtering
-- [ ] When the same repo appears under multiple team sources, `sources` lists all of them
 - [ ] `fetch_repository_stats` returns correct issue/PR/workflow counts
 - [ ] Stale detection works: issues with no comments beyond threshold, PRs with no pushes/comments beyond threshold
 - [ ] Pagination works for repos with >30 issues/PRs

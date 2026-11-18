@@ -65,40 +65,13 @@ git:
 
 ---
 
-## `teams` {: #teams }
+## `repositories` {: #repositories }
 
-**Required.** A non-empty list of teams. Every monitored repository belongs to a team, and each team id must be unique.
+**Required.** A list of repository sources to monitor. Each entry is one of:
 
-| Key | Type | Required | Default | Description |
-|-----|------|----------|---------|-------------|
-| `id` | string | Yes | — | Unique identifier. Used in the dashboard filter (`?team=<id>`). |
-| `label` | string | No | same as `id` | Display name shown in the dashboard dropdown. |
-| `github` | string | No | — | GitHub team in `org/team-slug` form. Tracks all of its non-archived repositories. |
-| `exclude` | list of strings | No | `[]` | Repos to skip (full names). Applies to both the `github` team listing and explicit `repositories`. |
-| `workflows.include` | list of strings | No | — | Glob patterns — only track matching workflows. |
-| `workflows.exclude` | list of strings | No | — | Glob patterns — exclude matching workflows (applied after include). |
-| `repositories` | list | No | `[]` | Explicit extra repositories for this team (see below). |
+### Static repo
 
-Each team must have at least one source: `github`, or at least one entry in `repositories`.
-
-```yaml
-teams:
-  - id: "mlops"
-    label: "MLOps"
-    github: "my-org/mlops"
-    exclude:
-      - "my-org/archive-experiments"
-    workflows:
-      exclude: ["Release *"]
-  - id: "processing"
-    repositories:
-      - repo: "my-org/processing-core"
-        branches: ["main", "develop"]
-```
-
-### Explicit repositories
-
-Each entry under `repositories` tracks a single repository by full name.
+Track a single repository by full name.
 
 | Key | Type | Required | Description |
 |-----|------|----------|-------------|
@@ -107,9 +80,34 @@ Each entry under `repositories` tracks a single repository by full name.
 | `workflows.include` | list of strings | No | Glob patterns — only track matching workflows |
 | `workflows.exclude` | list of strings | No | Glob patterns — exclude matching workflows (applied after include) |
 
-If the same repository appears under more than one team, it is merged: all team ids are kept for dashboard filtering.
+```yaml
+repositories:
+  - repo: "owner/repo-name"
+    branches: ["main", "develop"]
+    workflows:
+      include: ["CI", "Tests *"]
+      exclude: ["Publish *"]
+```
 
-**Dashboard team filter:** The dashboard and backlog show a Team dropdown listing every configured team by its `label` (or `id` when no label is set). The filter uses `?team=<id>`. Choose **All** to show every tracked repo / backlog item. Teams from config always appear in the dropdown, even if that team currently has no cached repositories. On the dashboard, repository rows display the short repo name (without `owner/`) for readability.
+### Team source
+
+Track all repositories belonging to a GitHub team. Archived repos are always excluded.
+
+| Key | Type | Required | Description |
+|-----|------|----------|-------------|
+| `team` | string | Yes | Team slug (`org/team-name`) |
+| `exclude` | list of strings | No | Repos to exclude (full names) |
+| `workflows.include` | list of strings | No | Glob patterns — only track matching workflows |
+| `workflows.exclude` | list of strings | No | Glob patterns — exclude matching workflows |
+
+```yaml
+repositories:
+  - team: "org-name/team-slug"
+    exclude:
+      - "org-name/excluded-repo"
+    workflows:
+      exclude: ["Release *"]
+```
 
 ---
 
@@ -137,8 +135,6 @@ staleness:
 The thresholds above control *when* issues/PRs count as stale and *how* stale counts are highlighted — they don't control whether staleness affects a repo's overall health status (the left-border accent / status icon on the dashboard).
 
 That's a separate, per-browser display preference: click the ⚙ icon next to the dashboard's view switcher to toggle whether **check results** and/or **stale issues/PRs** are factored into the computed health status. Workflow failures always count. This preference is stored in your browser's `localStorage`, not in `config.yaml` — it doesn't affect other viewers of the same Grimoire instance.
-
-When multiple GitHub team sources are configured, use the **Team** dropdown on the dashboard and backlog to narrow results to one sub-team. The filter is shareable via `?team=workflows` (team slug) in the URL.
 
 ---
 
@@ -317,14 +313,11 @@ git:
     format: "ssh"
   ssh_known_hosts: "/keys/known_hosts"
 
-teams:
-  - id: "owner"
-    repositories:
-      - repo: "owner/repo-name"
-        branches: ["main", "develop"]
-      - repo: "owner/another-repo"
-  - id: "mlops"
-    github: "org-name/team-slug"
+repositories:
+  - repo: "owner/repo-name"
+    branches: ["main", "develop"]
+  - repo: "owner/another-repo"
+  - team: "org-name/team-slug"
     exclude:
       - "org-name/excluded-repo"
     workflows:

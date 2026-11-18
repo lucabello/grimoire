@@ -12,7 +12,7 @@ def _make_vm(**overrides: object) -> RepoViewModel:
     defaults: dict[str, object] = {
         "full_name": "org/repo",
         "branches": ["main"],
-        "sources": ["team:obs"],
+        "source": "team:obs",
         "open_issues": 0,
         "stale_issues": 0,
         "open_prs": 0,

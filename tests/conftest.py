@@ -21,12 +21,10 @@ def tmp_config(tmp_path: Path) -> Path:
         github:
           token: "ghp_test_token_123"
 
-        teams:
-          - id: "owners"
-            repositories:
-              - repo: "owner/repo1"
-                branches: ["main", "develop"]
-              - repo: "owner/repo2"
+        repositories:
+          - repo: "owner/repo1"
+            branches: ["main", "develop"]
+          - repo: "owner/repo2"
 
         staleness:
           pull_requests_days: 14
