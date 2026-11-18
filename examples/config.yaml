@@ -31,6 +31,22 @@ repositories:
   #   exclude:
   #     - "org-name/excluded-repo"
 
+# Spaces (optional): named slices of the repositories above. A navbar selector filters every page
+# by space. Spaces are a view filter, not a security boundary. `repositories:` above may be empty
+# when spaces provide the sources; repos listed there and in no space show as "Unassigned".
+# spaces:
+#   - id: platform               # lowercase letters, digits and "-"
+#     name: "Platform"
+#     color: "#3366ff"           # optional
+#     description: "Platform team"
+#     repositories:              # same sources as above (repo / team)
+#       - repo: "owner/repo-name"
+#       - team: "org-name/platform"
+#
+# One space per file, e.g. spaces.d/payments.yaml with the same keys as an entry above.
+# Globs are relative to the directory of this config file.
+# space_files: ["spaces.d/*.yaml"]
+
 # Staleness thresholds
 staleness:
   pull_requests_days: 30   # PRs with no push/comment for this many days
