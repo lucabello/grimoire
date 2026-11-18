@@ -51,7 +51,11 @@ from grimoire.github.service import (
 )
 from grimoire.models import TrackedRepository
 from grimoire.observability.logging import setup_logging
-from grimoire.observability.metrics import DATA_REFRESH_DURATION, update_repo_metrics
+from grimoire.observability.metrics import (
+    DATA_REFRESH_DURATION,
+    update_repo_metrics,
+    update_space_metrics,
+)
 from grimoire.observability.metrics import router as metrics_router
 from grimoire.prs import router as prs_router
 from grimoire.prs import set_prs_config
@@ -163,12 +167,14 @@ async def lifespan(_app: FastAPI) -> AsyncIterator[None]:
         if cached_repos and cache_is_fresh:
             update_cache(cached_repos, cached_stats, timestamp=newest_fetched_at)
             update_repo_metrics(cached_stats)
+            update_space_metrics(cached_repos)
             repos = cached_repos
             logger.info("Using cached data — %d repositories loaded", len(repos))
         elif cached_repos:
             # Stale cache — serve it immediately, refresh in background
             update_cache(cached_repos, cached_stats, timestamp=newest_fetched_at)
             update_repo_metrics(cached_stats)
+            update_space_metrics(cached_repos)
             repos = cached_repos
             need_background_refresh = True
             logger.info(
@@ -190,6 +196,7 @@ async def lifespan(_app: FastAPI) -> AsyncIterator[None]:
                 )
                 update_cache(cached_repos, cached_stats, timestamp=newest_fetched_at)
                 update_repo_metrics(cached_stats)
+                update_space_metrics(cached_repos)
                 repos = cached_repos
                 logger.info("Loaded %d repositories from cache (fallback)", len(cached_repos))
         except Exception:
@@ -220,6 +227,7 @@ async def lifespan(_app: FastAPI) -> AsyncIterator[None]:
             refreshed_repos, refreshed_stats = await refresh_all_stats(config, client)
         update_cache(refreshed_repos, refreshed_stats)
         update_repo_metrics(refreshed_stats)
+        update_space_metrics(refreshed_repos)
         await prune_stale_data(engine, refreshed_repos, config.workspace_dir)
 
         # Sync local clones with their remotes so worktrees have fresh data
