@@ -28,6 +28,32 @@ class TestDashboard:
         assert "Rate limit approaching" in resp.text
 
 
+class TestDashboardChecksColumn:
+    """The matrix has a Checks column only when checks are defined."""
+
+    async def test_no_column_without_checks(self, web_client: AsyncClient) -> None:
+        for path in ("/", "/partials/dashboard-matrix"):
+            html = (await web_client.get(path)).text
+            assert ">Checks</th>" not in html, path
+
+    async def test_rows_match_the_header_without_checks(self, web_client: AsyncClient) -> None:
+        html = (await web_client.get("/partials/dashboard-matrix")).text
+        header = html.split("<thead>")[1].split("</thead>")[0].count("<th")
+        first_row = html.split("<tbody>")[1].split("</tr>")[0].count("<td")
+        assert header == first_row
+
+    async def test_column_when_checks_are_defined(
+        self, web_client_with_checks: AsyncClient
+    ) -> None:
+        for path in ("/", "/partials/dashboard-matrix"):
+            html = (await web_client_with_checks.get(path)).text
+            assert ">Checks</th>" in html, path
+        html = (await web_client_with_checks.get("/partials/dashboard-matrix")).text
+        header = html.split("<thead>")[1].split("</thead>")[0].count("<th")
+        first_row = html.split("<tbody>")[1].split("</tr>")[0].count("<td")
+        assert header == first_row
+
+
 class TestRepositoryDetail:
     """Tests for GET /repo/{owner}/{name} route."""
 
@@ -808,8 +834,9 @@ class TestWorkflowGroupColumns:
             name: row for row in rows for name in ("acme/api", "acme/frontend") if name in row
         }
         pattern = r'<td class="text-center py-0.5">(.*?)</td>'
-        frontend = re.findall(pattern, row_by_repo["acme/frontend"], re.S)[-4:-1]
-        api = re.findall(pattern, row_by_repo["acme/api"], re.S)[-4:-1]
+        # no checks are defined in this fixture, so the workflow cells are the last three
+        frontend = re.findall(pattern, row_by_repo["acme/frontend"], re.S)[-3:]
+        api = re.findall(pattern, row_by_repo["acme/api"], re.S)[-3:]
         assert len(frontend) == len(api) == 3
         assert "Build (main)" in frontend[0]
         assert "tooltip" not in frontend[1]

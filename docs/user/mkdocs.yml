@@ -46,6 +46,7 @@ nav:
       - Write an action: how-to/write-an-action.md
       - Install tools for your checks: how-to/install-tools.md
       - Deploy Grimoire: how-to/deploy.md
+      - Host Grimoire for several teams: how-to/host-for-several-teams.md
   - Reference:
       - Configuration: reference/configuration.md
       - Checks: reference/checks.md

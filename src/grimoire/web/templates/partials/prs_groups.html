@@ -72,6 +72,9 @@
 </div>
 
 {# ── Group sections ── #}
+{% if no_space_matches %}
+<p class="text-sm opacity-60">No open PRs in the selected spaces match any group.</p>
+{% endif %}
 <div class="flex flex-col gap-4">
 {% for g in groups %}
 <details open class="bg-base-100 rounded-lg shadow-sm" id="prs-group-{{ loop.index }}">

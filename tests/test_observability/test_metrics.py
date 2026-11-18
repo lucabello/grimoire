@@ -7,7 +7,7 @@ from datetime import datetime, timedelta, timezone
 from httpx import AsyncClient
 from prometheus_client import REGISTRY
 
-from grimoire.models import RepositoryStats, WorkflowStatus
+from grimoire.models import RepoMembership, RepositoryStats, TrackedRepository, WorkflowStatus
 from grimoire.observability.metrics import (
     DATA_FETCHED_TIMESTAMP,
     LAST_COMMIT_TIMESTAMP,
@@ -23,6 +23,7 @@ from grimoire.observability.metrics import (
     WORKFLOW_STATUS,
     update_check_metrics,
     update_repo_metrics,
+    update_space_metrics,
 )
 
 
@@ -168,3 +169,54 @@ async def test_update_repo_metrics_sets_age_gauges_and_histograms() -> None:
     assert issue_hist_count >= 2
     assert pr_hist_count is not None
     assert pr_hist_count >= 2
+
+
+def _space_series() -> set[tuple[str, str]]:
+    series = set()
+    for family in REGISTRY.collect():
+        if family.name == "grimoire_repository_space_info":
+            for sample in family.samples:
+                assert sample.value == 1
+                series.add((sample.labels["repo"], sample.labels["space"]))
+    return series
+
+
+def test_space_info_has_one_series_per_membership() -> None:
+    repos = [
+        TrackedRepository(
+            full_name="org/shared",
+            memberships=[RepoMembership(), RepoMembership(space="a"), RepoMembership(space="b")],
+        ),
+        TrackedRepository(full_name="org/solo", memberships=[RepoMembership(space="a")]),
+        TrackedRepository(full_name="org/loose", memberships=[RepoMembership()]),
+    ]
+
+    update_space_metrics(repos)
+
+    # The overlapping repo yields two series; the unassigned repo none.
+    assert _space_series() == {("org/shared", "a"), ("org/shared", "b"), ("org/solo", "a")}
+
+
+def test_space_info_series_of_removed_memberships_disappear() -> None:
+    shared = TrackedRepository(
+        full_name="org/shared",
+        memberships=[RepoMembership(space="a"), RepoMembership(space="b")],
+    )
+    gone = TrackedRepository(full_name="org/gone", memberships=[RepoMembership(space="a")])
+    update_space_metrics([shared, gone])
+    assert ("org/gone", "a") in _space_series()
+
+    shared_after = shared.model_copy(update={"memberships": [RepoMembership(space="a")]})
+    update_space_metrics([shared_after])
+
+    assert _space_series() == {("org/shared", "a")}
+
+
+def test_space_info_is_exposed_on_the_metrics_endpoint() -> None:
+    update_space_metrics(
+        [TrackedRepository(full_name="org/x", memberships=[RepoMembership(space="a")])]
+    )
+    from prometheus_client import generate_latest
+
+    assert b'grimoire_repository_space_info{repo="org/x",space="a"} 1.0' in generate_latest()
+    update_space_metrics([])

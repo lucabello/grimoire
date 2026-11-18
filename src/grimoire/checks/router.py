@@ -6,7 +6,7 @@ import logging
 from datetime import datetime, timezone
 from typing import TYPE_CHECKING
 
-from fastapi import APIRouter, BackgroundTasks, HTTPException
+from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException
 from pydantic import BaseModel
 from sqlalchemy import text
 from sqlmodel import select
@@ -14,6 +14,7 @@ from sqlmodel.ext.asyncio.session import AsyncSession
 
 from grimoire.checks.engine import is_check_running, run_check_for_all_targets
 from grimoire.database import CheckResultRecord, CheckRunRecord, CheckToggleRecord
+from grimoire.spaces import SpaceSelection, api_space_selection
 
 logger = logging.getLogger(__name__)
 
@@ -36,6 +37,7 @@ class CheckListItem(BaseModel):
     schedule: str | None
     enabled: bool
     target_count: int
+    spaces: list[str] = []
 
 
 class CheckResultResponse(BaseModel):
@@ -117,10 +119,18 @@ router = APIRouter(prefix="/checks", tags=["checks"])
 
 
 @router.get("/", response_model=list[CheckListItem])
-async def list_checks() -> list[CheckListItem]:
-    """List all check definitions with enabled status."""
+async def list_checks(
+    selection: SpaceSelection = Depends(api_space_selection),
+) -> list[CheckListItem]:
+    """List the check definitions with enabled status.
+
+    ``?spaces=`` keeps the checks listed under those spaces plus the global ones (no ``spaces``).
+    Targeting is unaffected.
+    """
     items: list[CheckListItem] = []
     for c in _checks:
+        if not selection.lists(c.spaces):
+            continue
         items.append(
             CheckListItem(
                 name=c.name,
@@ -129,14 +139,17 @@ async def list_checks() -> list[CheckListItem]:
                 schedule=c.schedule,
                 enabled=c.enabled,
                 target_count=0,
+                spaces=c.spaces,
             )
         )
     return items
 
 
 @router.get("/{slug}/results", response_model=list[CheckResultResponse])
-async def get_check_results(slug: str) -> list[CheckResultResponse]:
-    """Get latest results for a check, grouped by repo+branch."""
+async def get_check_results(
+    slug: str, selection: SpaceSelection = Depends(api_space_selection)
+) -> list[CheckResultResponse]:
+    """Get latest results for a check, grouped by repo+branch (``?spaces=`` filters the repos)."""
     _find_check(slug)
     assert _engine is not None
 
@@ -157,6 +170,7 @@ async def get_check_results(slug: str) -> list[CheckResultResponse]:
     async with AsyncSession(_engine) as session:
         rows = (await session.exec(query, params={"slug": slug})).all()  # type: ignore[call-arg]
 
+    visible = selection.repo_name_filter()
     return [
         CheckResultResponse(
             check_name=row[0],
@@ -168,6 +182,7 @@ async def get_check_results(slug: str) -> list[CheckResultResponse]:
             timestamp=row[6],
         )
         for row in rows
+        if visible(row[2])
     ]
 
 

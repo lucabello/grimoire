@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from datetime import datetime
 
-from fastapi import APIRouter, BackgroundTasks, HTTPException
+from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException
 
 from grimoire.github.schemas import (
     RefreshResponse,
@@ -15,6 +15,7 @@ from grimoire.github.schemas import (
     WorkflowStatusResponse,
 )
 from grimoire.models import RepositoryStats, TrackedRepository
+from grimoire.spaces import ALL_SPACES, SpaceSelection, api_space_selection
 
 # ---------------------------------------------------------------------------
 # In-memory cache — populated by the service layer
@@ -47,8 +48,19 @@ def update_cache(
     _last_refresh = timestamp or datetime.now(tz=__import__("datetime").timezone.utc)
 
 
-def _build_summary(repo: TrackedRepository, stats: RepositoryStats) -> RepoSummary:
-    workflow_failures = sum(1 for w in stats.workflows if w.status == "failure")
+def get_tracked_repos() -> list[TrackedRepository]:
+    """The currently tracked repositories (from the in-memory cache)."""
+    return list(_repos.values())
+
+
+def _build_summary(
+    repo: TrackedRepository, stats: RepositoryStats, selection: SpaceSelection = ALL_SPACES
+) -> RepoSummary:
+    workflow_failures = sum(
+        1
+        for w in stats.workflows
+        if w.status == "failure" and selection.workflow_visible(repo, w.name)
+    )
     return RepoSummary(
         full_name=stats.full_name,
         default_branch=stats.default_branch,
@@ -75,14 +87,16 @@ router = APIRouter(prefix="/repos", tags=["repositories"])
 
 
 @router.get("/", response_model=RepoListResponse)
-async def list_repos() -> RepoListResponse:
-    """List all tracked repositories with summary stats."""
+async def list_repos(
+    selection: SpaceSelection = Depends(api_space_selection),
+) -> RepoListResponse:
+    """List the tracked repositories (optionally only those in ``?spaces=``) with summary stats."""
     summaries: list[RepoSummary] = []
     for full_name, stats in _cache.items():
         repo = _repos.get(full_name)
-        if repo is None:
+        if repo is None or not selection.includes(repo):
             continue
-        summaries.append(_build_summary(repo, stats))
+        summaries.append(_build_summary(repo, stats, selection))
     return RepoListResponse(repositories=summaries, last_refresh=_last_refresh)
 
 

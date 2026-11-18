@@ -67,7 +67,7 @@ git:
 
 ## `repositories` {: #repositories }
 
-**Required.** A list of repository sources to monitor. Each entry is one of:
+**Required** unless [`spaces`](#spaces) or [`space_files`](#space-files) provide at least one repository source. A list of repository sources to monitor. Each entry is one of:
 
 ### Static repo
 
@@ -108,6 +108,71 @@ repositories:
     workflows:
       exclude: ["Release *"]
 ```
+
+Repositories listed here and in no [space](#spaces) are shown as **Unassigned** once spaces are configured.
+
+---
+
+## `spaces` {: #spaces }
+
+**Optional.** Named slices of the tracked repositories, so that several teams can share one Grimoire. When spaces are configured, a selector in the navigation bar filters every page by space. See [Host Grimoire for several teams](../how-to/host-for-several-teams.md) for a walkthrough and [Spaces](../explanation/architecture.md#spaces) for how they behave.
+
+Each entry has these keys and no others; an unknown key is a startup error.
+
+| Key | Type | Required | Description |
+|-----|------|----------|-------------|
+| `id` | string | Yes | Identifier used in `?spaces=`, in the `spaces` field of [checks](checks.md) and [actions](actions.md), and in the metrics. Must match `^[a-z0-9][a-z0-9-]*$`: lower-case letters, digits and `-`, not starting with `-` or `_`. Unique across inline spaces and space files. |
+| `name` | string | Yes | Display name. |
+| `description` | string | No | Default `""`. Shown as a tooltip in the selector. |
+| `repositories` | list | Yes, non-empty | Repository sources, with the same keys as the top-level [`repositories`](#repositories): static repos and team sources, including `branches`, `exclude` and `workflows`. |
+
+```yaml
+spaces:
+  - id: platform
+    name: "Platform"
+    description: "Platform team"
+    repositories:
+      - repo: "org-name/api"
+      - team: "org-name/platform"
+```
+
+### Repositories in several spaces
+
+A repository may be listed in several spaces and in the top-level `repositories`. Grimoire fetches and clones it once. Its branches are the union of the branches of every source that lists it. A workflow filter (`workflows.include` / `workflows.exclude`) belongs to the source that sets it:
+
+- A workflow is fetched and kept if **any** source allows it.
+- A workflow is shown if any source of a **selected** space allows it. With several spaces selected, the filters are combined; with **All** selected, every source counts.
+
+### Unassigned
+
+When spaces are configured, repositories that only appear in the top-level `repositories` belong to no space. The selector then offers an **Unassigned** entry (id `_unassigned` in `?spaces=`), only while such repositories exist. `_unassigned` cannot be used as a space `id` or in the `spaces` field of a check or action.
+
+---
+
+## `space_files` {: #space-files }
+
+**Optional.** A list of glob patterns for files that each define one space, so that each team can own its own file. Patterns are relative to the directory of the main config file and may use `**`. Files matched by one pattern are loaded in sorted order; a file matched by several patterns is loaded once; a pattern that matches nothing is not an error.
+
+```yaml
+space_files: ["spaces.d/*.yaml"]
+```
+
+```yaml
+# spaces.d/payments.yaml — the same keys as one entry of `spaces`
+id: payments
+name: "Payments"
+repositories:
+  - repo: "org-name/payments-api"
+  - repo: "org-name/shared-lib"
+    workflows:
+      include: ["CI"]
+```
+
+Rules for space files and inline spaces:
+
+- A file must be a YAML mapping describing exactly one space, with only the space keys above. `${ENV_VAR}` references are resolved as in the main file.
+- The spaces from files are appended after the inline ones. There are no overrides: a duplicate `id` (inline and file, or two files) is a startup error that names both places.
+- Other settings (`staleness`, `backlog`, `dashboard`, `prs`, `refresh_schedule`) are global; a space cannot override them.
 
 ---
 
@@ -350,6 +415,15 @@ prs:
     - name: "Maintenance"
       authors: ["app/renovate", "app/dependabot"]
       repos: ["org-name/*"]
+
+spaces:
+  - id: platform
+    name: "Platform"
+    repositories:
+      - repo: "owner/repo-name"
+      - team: "org-name/platform"
+
+space_files: ["spaces.d/*.yaml"]
 
 refresh_schedule: "*/5 * * * *"
 

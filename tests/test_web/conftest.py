@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from collections.abc import Iterator
 from datetime import datetime, timezone
 from typing import AsyncIterator
 
@@ -328,3 +329,108 @@ async def web_client_with_actions(tmp_path: object) -> AsyncIterator[AsyncClient
     _checks.clear()
     _checks.extend(saved_checks)
     await engine.dispose()
+
+
+# ---------------------------------------------------------------------------
+# Spaces: an overlapping repo, a single-space repo and an unassigned repo
+# ---------------------------------------------------------------------------
+
+
+def _space_workflow(name: str, status: str = "success") -> WorkflowStatus:
+    return WorkflowStatus(name=name, branch="main", status=status, url=f"https://x/{name}")
+
+
+def _space_issue(number: int, title: str) -> IssueDetail:
+    return IssueDetail(
+        number=number,
+        title=title,
+        url=f"https://github.com/o/r/issues/{number}",
+        created_at=datetime(2024, 1, 1, tzinfo=timezone.utc),
+        last_activity_at=datetime(2024, 1, 2, tzinfo=timezone.utc),
+        author="a",
+    )
+
+
+@pytest.fixture
+def overlap_spaces() -> Iterator[None]:
+    """Spaces `a` (Alpha) and `b` (Beta) over three repos.
+
+    * ``o/shared``: top-level and in both spaces; space a keeps workflow ``CI``, space b keeps
+      ``Release``; ``Release`` and ``Lint`` fail.
+    * ``o/solo``: only in space a; ``CI`` fails.
+    * ``o/loose``: only top-level (unassigned).
+    Each repo has one stale issue: "shared issue", "solo issue", "loose issue".
+    """
+    from grimoire.config import SpaceConfig, StaticRepoSource
+    from grimoire.github.router import get_tracked_repos
+    from grimoire.models import RepoMembership
+    from grimoire.spaces import set_spaces_config
+
+    repos = [
+        TrackedRepository(
+            full_name="o/shared",
+            branches=["main"],
+            memberships=[
+                RepoMembership(),
+                RepoMembership(space="a", workflow_include=["CI"]),
+                RepoMembership(space="b", workflow_include=["Release"]),
+            ],
+        ),
+        TrackedRepository(
+            full_name="o/solo", branches=["main"], memberships=[RepoMembership(space="a")]
+        ),
+        TrackedRepository(full_name="o/loose", branches=["main"], memberships=[RepoMembership()]),
+    ]
+
+    def stats(name: str, workflows: list[WorkflowStatus], issues: int, stale: str):
+        return RepositoryStats(
+            full_name=name,
+            default_branch="main",
+            open_issues=issues,
+            stale_issues=1,
+            stale_issue_items=[_space_issue(issues, stale)],
+            workflows=workflows,
+        )
+
+    update_cache(
+        repos,
+        [
+            stats(
+                "o/shared",
+                [
+                    _space_workflow("CI"),
+                    _space_workflow("Release", "failure"),
+                    _space_workflow("Lint", "failure"),
+                ],
+                1,
+                "shared issue",
+            ),
+            stats("o/solo", [_space_workflow("CI", "failure")], 10, "solo issue"),
+            stats("o/loose", [_space_workflow("CI")], 100, "loose issue"),
+        ],
+    )
+    source = [StaticRepoSource(repo="o/x")]
+    set_spaces_config(
+        [
+            SpaceConfig(id="a", name="Alpha", repositories=source),
+            SpaceConfig(id="b", name="Beta", repositories=source),
+        ],
+        get_tracked_repos,
+    )
+    yield
+    set_spaces_config([])
+    update_cache([], [])
+
+
+@pytest.fixture
+async def overlap_client(overlap_spaces: None) -> AsyncIterator[AsyncClient]:
+    from grimoire.actions.router import _actions
+    from grimoire.checks.router import _checks
+
+    saved = (_actions[:], _checks[:])
+    _actions.clear()
+    _checks.clear()
+    app = create_app()
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+        yield client
+    _actions[:], _checks[:] = saved

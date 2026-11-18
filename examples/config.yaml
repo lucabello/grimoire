@@ -37,7 +37,6 @@ repositories:
 # spaces:
 #   - id: platform               # lowercase letters, digits and "-"
 #     name: "Platform"
-#     color: "#3366ff"           # optional
 #     description: "Platform team"
 #     repositories:              # same sources as above (repo / team)
 #       - repo: "owner/repo-name"

@@ -315,7 +315,6 @@ class TestSpaces:
             spaces:
               - id: platform
                 name: Platform
-                color: "#3366ff"
                 description: Platform team
                 repositories:
                   - repo: "owner/api"
@@ -327,11 +326,7 @@ class TestSpaces:
         config = load_config(main)
         assert [s.id for s in config.spaces] == ["platform"]
         space = config.spaces[0]
-        assert (space.name, space.color, space.description) == (
-            "Platform",
-            "#3366ff",
-            "Platform team",
-        )
+        assert (space.name, space.description) == ("Platform", "Platform team")
         assert isinstance(space.repositories[0], StaticRepoSource)
         assert space.repositories[0].branches == ["main"]
         assert isinstance(space.repositories[1], TeamRepoSource)
@@ -346,7 +341,6 @@ class TestSpaces:
             """,
         )
         space = load_config(main).spaces[0]
-        assert space.color is None
         assert space.description == ""
 
     def test_space_files_only(self, tmp_path: Path) -> None:
@@ -479,11 +473,16 @@ class TestSpaces:
         with pytest.raises(ValueError):
             SpaceConfig(id=bad_id, name="X", repositories=[StaticRepoSource(repo="o/r")])
 
-    def test_invalid_color(self) -> None:
-        with pytest.raises(ValueError):
-            SpaceConfig(
-                id="a", name="A", color="blue", repositories=[StaticRepoSource(repo="o/r")]
-            )
+    def test_color_is_not_a_space_key(self, tmp_path: Path) -> None:
+        main = self._main(
+            tmp_path,
+            """\
+            spaces:
+              - {id: a, name: A, color: "#3366ff", repositories: [{repo: "o/r"}]}
+            """,
+        )
+        with pytest.raises(ValueError, match="color"):
+            load_config(main)
 
     def test_space_needs_repositories(self, tmp_path: Path) -> None:
         main = self._main(

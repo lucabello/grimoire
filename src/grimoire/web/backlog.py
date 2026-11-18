@@ -10,6 +10,8 @@ from enum import Enum
 from fnmatch import fnmatch
 from typing import TYPE_CHECKING, Any
 
+from grimoire.spaces import ALL_SPACES, SpaceSelection
+
 if TYPE_CHECKING:
     from grimoire.config import BacklogConfig, StalenessConfig
     from grimoire.models import (
@@ -238,15 +240,16 @@ def _collect_workflow_items(
     repo: TrackedRepository,
     config: BacklogConfig,
     now: datetime,
+    selection: SpaceSelection = ALL_SPACES,
 ) -> list[BacklogItem]:
-    """Create backlog items for failing workflows.
+    """Create backlog items for failing workflows the selected spaces' filters allow.
 
     Workflow failures use age_factor=1.0 because we don't track when the
     failure first started — only that it's currently failing.
     """
     items: list[BacklogItem] = []
     for wf in stats.workflows:
-        if wf.status != "failure":
+        if wf.status != "failure" or not selection.workflow_visible(repo, wf.name):
             continue
         category_weight = _get_category_weight(BacklogCategory.FAILING_WORKFLOW, config)
         workflow_mult = _get_workflow_multiplier(wf.name, config)
@@ -395,8 +398,12 @@ def build_backlog_items(
     results_by_key: dict[tuple[str, str, str], dict[str, Any]],
     check_defs: list[Any],
     now: datetime | None = None,
+    selection: SpaceSelection = ALL_SPACES,
 ) -> list[BacklogItem]:
-    """Collect all backlog items from the current cache and sort by score descending."""
+    """Collect the backlog items of the repos in the space *selection*, best score first.
+
+    The selection only decides which items exist; scoring and weights are unaffected.
+    """
     if now is None:
         now = datetime.now(tz=timezone.utc)
 
@@ -404,19 +411,20 @@ def build_backlog_items(
 
     for full_name, stats in cache.items():
         repo = repos.get(full_name)
-        if repo is None:
+        if repo is None or not selection.includes(repo):
             continue
 
         branches = repo.branches or [stats.default_branch]
 
-        all_items.extend(_collect_workflow_items(stats, repo, config, now))
-        all_items.extend(_collect_stale_pr_items(stats, repo, config, staleness, now))
-        all_items.extend(_collect_stale_issue_items(stats, repo, config, staleness, now))
-        all_items.extend(
-            _collect_check_items(
+        repo_items = [
+            *_collect_workflow_items(stats, repo, config, now, selection),
+            *_collect_stale_pr_items(stats, repo, config, staleness, now),
+            *_collect_stale_issue_items(stats, repo, config, staleness, now),
+            *_collect_check_items(
                 repo, branches, check_targets, results_by_key, check_defs, config, now
-            )
-        )
+            ),
+        ]
+        all_items.extend(repo_items)
 
     all_items.sort(key=lambda item: item.score, reverse=True)
     return all_items

@@ -77,6 +77,19 @@ Grimoire uses SQLite via aiosqlite + SQLModel. The database stores:
 
 The schema is migrated automatically at startup: a new database is created, and an existing one — including one from a release that predates migrations — is upgraded in place. Upgrading Grimoire never requires deleting `grimoire.db`; toggles, run history and the GitHub cache are kept.
 
+## Spaces
+
+A **space** is a named slice of the tracked repositories, for example the repositories of one team. Several teams can then share one Grimoire, each looking at its own slice through the space selector in the navigation bar.
+
+Spaces are a **view filter**, not isolation. There is one GitHub token, one git identity, one workspace, one database, one cache and one scheduler for everything. A repository that belongs to several spaces is fetched and cloned once. Display settings (`staleness`, `backlog`, `dashboard`, `prs`, `refresh_schedule`) are global.
+
+- **Membership.** Each source that lists a repository (the top-level `repositories` or a space) is one *membership* of that repository. Branches are merged across memberships, and each membership carries its own workflow filters. Repositories with no space are **Unassigned**.
+- **Selection.** The selector in the navigation bar picks any number of spaces; none, or all of them, means All. The web pages keep the choice in the `grimoire_spaces` cookie for a year, and `?spaces=` on a page applies and saves a choice. The JSON API reads only `?spaces=` and never the cookie, so API results do not depend on who asks.
+- **What it filters.** The dashboard, backlog, checks, actions and PRs pages, and the matching APIs. It never changes what runs: a check or action's `targets` still decide its repositories, and `spaces` on a check or action only decides where it is listed.
+- **Metrics.** `grimoire_repository_space_info{repo,space}` carries the memberships; the other series are unchanged. See `METRICS.md` in the repository.
+
+Whoever can edit the configuration, a space file, or the check and action scripts can affect the whole instance. See [Host Grimoire for several teams](../how-to/host-for-several-teams.md).
+
 ## Security model
 
 !!! warning "Trust boundary"
@@ -84,6 +97,6 @@ The schema is migrated automatically at startup: a new database is created, and 
     Grimoire executes user-provided bash scripts with the same privileges as the
     Grimoire process. It is designed for **self-hosted, trusted environments** only.
 
-- No authentication is built in — use a reverse proxy for access control.
+- No authentication is built in — use a reverse proxy for access control. Spaces do not restrict access: anyone who can open Grimoire can select any space.
 - The GitHub token has access to all configured repositories.
 - Actions can push commits, create PRs, and call `gh` CLI with the token.

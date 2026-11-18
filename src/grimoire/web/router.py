@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import re
+from collections.abc import Callable
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from fnmatch import fnmatchcase
@@ -10,13 +11,14 @@ from importlib.metadata import version
 from pathlib import Path
 from typing import Any
 
-from fastapi import APIRouter, BackgroundTasks, HTTPException, Request
+from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, Request
 from fastapi.responses import HTMLResponse, PlainTextResponse
 from fastapi.templating import Jinja2Templates
 from sqlalchemy import text
 from sqlmodel import select
 from sqlmodel.ext.asyncio.session import AsyncSession
 
+from grimoire.actions.engine import GLOBAL_REPO
 from grimoire.config import DashboardConfig, StalenessConfig
 from grimoire.database import ActionRunRecord
 from grimoire.models import TrackedRepository, WorkflowStatus
@@ -32,7 +34,9 @@ from grimoire.prs import (
     normalize_author,
     search_results,
     sort_pull_requests,
+    stats_in_selection,
 )
+from grimoire.spaces import ALL_SPACES, SpaceSelection, api_space_selection
 from grimoire.targeting import TargetSpec
 from grimoire.web.backlog import (
     BacklogItem,
@@ -41,6 +45,7 @@ from grimoire.web.backlog import (
     group_by_repo,
     group_by_type,
 )
+from grimoire.web.spaces import html_space_selection, space_context
 
 router = APIRouter(tags=["web"])
 
@@ -52,7 +57,10 @@ def _base_path(request: Request) -> str:
 
 templates = Jinja2Templates(
     directory=str(Path(__file__).parent / "templates"),
-    context_processors=[lambda request: {"base_path": _base_path(request)}],
+    context_processors=[
+        lambda request: {"base_path": _base_path(request)},
+        space_context,
+    ],
 )
 templates.env.globals["VERSION"] = version("grimoire-dashboard")
 
@@ -349,6 +357,19 @@ def _time_ago(dt: datetime | str) -> str:
     return f"{days}d ago"
 
 
+def _result_repo_filter(selection: SpaceSelection) -> Callable[[str], bool]:
+    """Predicate on the repo of a check/action result: in the selection, or a global action."""
+    in_selection = selection.repo_name_filter()
+    return lambda name: name == GLOBAL_REPO or in_selection(name)
+
+
+def _has_checks() -> bool:
+    """True if any check is defined: without checks the dashboard has no Checks column."""
+    from grimoire.checks.router import _checks
+
+    return bool(_checks)
+
+
 def _compute_totals(repos: list[RepoViewModel]) -> DashboardTotals:
     totals = DashboardTotals(repos=len(repos))
     for r in repos:
@@ -508,9 +529,15 @@ def _build_checks_for_repo(
 
 
 async def _build_repo_viewmodels(
-    include_checks: bool = True, include_stale: bool = True
+    include_checks: bool = True,
+    include_stale: bool = True,
+    selection: SpaceSelection = ALL_SPACES,
 ) -> list[RepoViewModel]:
-    """Build view models from the in-memory GitHub cache + checks state."""
+    """Build view models from the in-memory GitHub cache + checks state.
+
+    Only repos in the space *selection* are returned, with the workflows that the selected
+    spaces' filters allow.
+    """
     from grimoire.github.router import _cache, _repos
 
     check_targets, results_by_key = await _load_check_context(_repos)
@@ -518,18 +545,22 @@ async def _build_repo_viewmodels(
     viewmodels: list[RepoViewModel] = []
     for full_name, stats in _cache.items():
         repo = _repos.get(full_name)
-        if repo is None:
+        if repo is None or not selection.includes(repo):
             continue
 
         branches = repo.branches or [stats.default_branch]
 
+        visible_workflows = [
+            wf for wf in stats.workflows if selection.workflow_visible(repo, wf.name)
+        ]
+
         # Group workflows by branch
         workflows_by_branch: dict[str, list[WorkflowStatus]] = {}
-        for wf in stats.workflows:
+        for wf in visible_workflows:
             workflows_by_branch.setdefault(wf.branch, []).append(wf)
 
         # Count workflow failures
-        workflow_failures = sum(1 for w in stats.workflows if w.status == "failure")
+        workflow_failures = sum(1 for w in visible_workflows if w.status == "failure")
 
         # Build check results
         checks_by_branch, check_failures, check_warnings = _build_checks_for_repo(
@@ -551,7 +582,7 @@ async def _build_repo_viewmodels(
                 warnings=stats.warnings,
                 workflows_by_branch=workflows_by_branch,
                 checks_by_branch=checks_by_branch,
-                workflow_columns=group_workflows(stats.workflows),
+                workflow_columns=group_workflows(visible_workflows),
                 fetched_at=stats.fetched_at,
                 last_commit_at=stats.last_commit_at,
                 total_branches=stats.total_branches,
@@ -574,15 +605,16 @@ async def dashboard(
     dir: str = "asc",
     include_checks: bool = True,
     include_stale: bool = True,
+    selection: SpaceSelection = Depends(html_space_selection),
 ) -> HTMLResponse:
-    """Dashboard page — lists all tracked repositories."""
+    """Dashboard page — lists the tracked repositories in the space selection."""
     from grimoire.github.router import _last_refresh
     from grimoire.github.service import get_refresh_progress, is_refresh_running
 
     refresh_running = is_refresh_running()
     refresh_progress = get_refresh_progress()
 
-    repos = await _build_repo_viewmodels(include_checks, include_stale)
+    repos = await _build_repo_viewmodels(include_checks, include_stale, selection)
 
     # Initial loading state: no repos yet and a refresh is in progress
     if not repos and refresh_running:
@@ -624,6 +656,7 @@ async def dashboard(
             "include_stale": include_stale,
             "sort_labels": SORT_LABELS,
             "workflow_column_names": workflow_column_names(),
+            "has_checks": _has_checks(),
             "staleness": _staleness_config,
             "time_ago": _time_ago,
             "running": refresh_running,
@@ -687,12 +720,16 @@ async def repository_detail(request: Request, owner: str, name: str) -> HTMLResp
 
 
 @router.get("/actions", response_class=HTMLResponse)
-async def actions_page(request: Request) -> HTMLResponse:
-    """Actions page — list available actions with per-action results."""
+async def actions_page(
+    request: Request, selection: SpaceSelection = Depends(html_space_selection)
+) -> HTMLResponse:
+    """Actions page — the actions listed under the space selection, with per-action results."""
     from grimoire.actions.router import _actions
     from grimoire.actions.router import _engine as _actions_engine
 
-    # Build per-action aggregate stats from DB (latest run's repo results)
+    shown = _result_repo_filter(selection)
+
+    # Build per-action aggregate stats from DB (latest run's repo results of the shown repos)
     action_stats: dict[str, dict[str, Any]] = {}
     if _actions_engine is not None:
         async with AsyncSession(_actions_engine) as session:
@@ -700,7 +737,8 @@ async def actions_page(request: Request) -> HTMLResponse:
             run_rows = (
                 await session.execute(
                     text(
-                        "SELECT ar.id, ar.action_slug, ar.started_at, arrr.passed "
+                        "SELECT ar.id, ar.action_slug, ar.started_at, arrr.passed, "
+                        "arrr.repo_full_name "
                         "FROM action_run ar "
                         "JOIN action_run_repo arrr ON arrr.run_id = ar.id "
                         "WHERE ar.id IN ("
@@ -713,6 +751,8 @@ async def actions_page(request: Request) -> HTMLResponse:
             ).all()
 
             for row in run_rows:
+                if not shown(row[4]):
+                    continue
                 slug = row[1]
                 started_at = row[2]
                 passed = bool(row[3])
@@ -726,6 +766,8 @@ async def actions_page(request: Request) -> HTMLResponse:
 
     action_vms = []
     for a in _actions:
+        if not selection.lists(a.spaces):
+            continue
         targets = a.targets
         if targets is None:
             target_summary = "global"
@@ -763,18 +805,24 @@ async def actions_page(request: Request) -> HTMLResponse:
 
 
 @router.get("/checks", response_class=HTMLResponse)
-async def checks_page(request: Request) -> HTMLResponse:
-    """Checks page — list defined checks, toggle, run, view results."""
+async def checks_page(
+    request: Request, selection: SpaceSelection = Depends(html_space_selection)
+) -> HTMLResponse:
+    """Checks page — the checks listed under the space selection: toggle, run, view results."""
     from grimoire.checks.router import _checks
     from grimoire.checks.router import _engine as _checks_engine
 
-    # Build per-check aggregate stats from DB
+    shown = _result_repo_filter(selection)
+
+    # Build per-check aggregate stats from DB (results of the shown repos)
     check_stats: dict[str, dict[str, Any]] = {}
     if _checks_engine is not None and _checks:
         async with AsyncSession(_checks_engine) as session:
             result = await session.execute(_LATEST_RESULTS_SQL)
             rows = result.all()
         for row in rows:
+            if not shown(row[3]):
+                continue
             slug = row[2]
             passed = bool(row[5])
             ts = row[6]
@@ -788,6 +836,8 @@ async def checks_page(request: Request) -> HTMLResponse:
 
     check_vms = []
     for c in _checks:
+        if not selection.lists(c.spaces):
+            continue
         targets = c.targets
         if targets.regex is not None:
             target_summary = f"regex: {targets.regex}"
@@ -830,17 +880,26 @@ async def checks_page(request: Request) -> HTMLResponse:
 # ---------------------------------------------------------------------------
 
 
-def _build_prs_context(sort: str, ci: str, search: str, group: str) -> dict[str, Any]:
-    """Template context of the PRs page and partial: groups filtered, sorted and counted."""
-    from grimoire.github.router import _cache, _last_refresh
+def _build_prs_context(
+    sort: str, ci: str, search: str, group: str, selection: SpaceSelection = ALL_SPACES
+) -> dict[str, Any]:
+    """Template context of the PRs page and partial: groups filtered, sorted and counted.
+
+    Only the PRs of repos in the space *selection* are used. Under a narrower selection the
+    groups left with no PRs are hidden (under All an empty group says so).
+    """
+    from grimoire.github.router import _cache, _last_refresh, _repos
 
     config = get_prs_config()
-    names = [g.name for g in config.groups]
     sort = sort if sort in PR_SORT_LABELS else "attention"
     ci = ci if ci in CI_FILTERS else ""
-    group = group if group in names else ""
 
-    all_results = build_group_results(config, _cache)
+    all_results = build_group_results(config, stats_in_selection(_cache, _repos, selection))
+    space_filtered = selection.ids is not None
+    if space_filtered:
+        all_results = [g for g in all_results if g.total]
+    names = [g.name for g in all_results] if space_filtered else [g.name for g in config.groups]
+    group = group if group in names else ""
     scoped = search_results([g for g in all_results if not group or g.name == group], search)
     shown = [
         GroupResult(g.name, sort_pull_requests(g.pull_requests, sort))
@@ -854,8 +913,10 @@ def _build_prs_context(sort: str, ci: str, search: str, group: str) -> dict[str,
         "groups": shown,
         "matched_totals": {g.name: g.total for g in all_results},
         "group_names": names,
+        "has_groups": bool(config.groups),
         "counts": distinct_ci_counts(scoped),
         "has_data": bool(_cache),
+        "no_space_matches": space_filtered and not all_results and bool(config.groups),
         "ci_warnings": ci_warnings,
         "last_refresh": _last_refresh,
         "last_refresh_ago": _time_ago(_last_refresh) if _last_refresh else None,
@@ -876,12 +937,13 @@ async def prs_page(
     ci: str = "",
     search: str = "",
     group: str = "",
+    selection: SpaceSelection = Depends(html_space_selection),
 ) -> HTMLResponse:
     """PRs page — the open pull requests of each configured group with their CI state."""
     from grimoire.github.service import get_refresh_progress, is_refresh_running
 
     progress = get_refresh_progress()
-    context = _build_prs_context(sort, ci, search, group)
+    context = _build_prs_context(sort, ci, search, group, selection)
     context.update(
         running=is_refresh_running(),
         progress_completed=progress.completed if progress else 0,
@@ -898,9 +960,10 @@ async def prs_partial(
     ci: str = "",
     search: str = "",
     group: str = "",
+    selection: SpaceSelection = Depends(html_space_selection),
 ) -> HTMLResponse:
     """Return the filtered PR groups as an HTMX partial."""
-    context = _build_prs_context(sort, ci, search, group)
+    context = _build_prs_context(sort, ci, search, group, selection)
     context["oob"] = True
     return templates.TemplateResponse(request, "partials/prs_groups.html", context=context)
 
@@ -911,10 +974,14 @@ async def prs_partial(
 
 
 async def _build_sorted_repos(
-    sort: str, direction: str, include_checks: bool = True, include_stale: bool = True
+    sort: str,
+    direction: str,
+    include_checks: bool = True,
+    include_stale: bool = True,
+    selection: SpaceSelection = ALL_SPACES,
 ) -> list[RepoViewModel]:
     """Build and sort repo view models (shared by all dashboard partials)."""
-    repos = await _build_repo_viewmodels(include_checks, include_stale)
+    repos = await _build_repo_viewmodels(include_checks, include_stale, selection)
     return _sort_repos(repos, sort, direction)
 
 
@@ -925,9 +992,10 @@ async def dashboard_matrix_partial(
     dir: str = "asc",
     include_checks: bool = True,
     include_stale: bool = True,
+    selection: SpaceSelection = Depends(html_space_selection),
 ) -> HTMLResponse:
     """Return the compact matrix view for HTMX swap."""
-    repos = await _build_sorted_repos(sort, dir, include_checks, include_stale)
+    repos = await _build_sorted_repos(sort, dir, include_checks, include_stale, selection)
     return templates.TemplateResponse(
         request,
         "partials/dashboard_matrix.html",
@@ -938,6 +1006,7 @@ async def dashboard_matrix_partial(
             "include_checks": include_checks,
             "include_stale": include_stale,
             "workflow_column_names": workflow_column_names(),
+            "has_checks": _has_checks(),
             "staleness": _staleness_config,
             "time_ago": _time_ago,
         },
@@ -951,9 +1020,10 @@ async def dashboard_list_partial(
     dir: str = "asc",
     include_checks: bool = True,
     include_stale: bool = True,
+    selection: SpaceSelection = Depends(html_space_selection),
 ) -> HTMLResponse:
     """Return the compact list view for HTMX swap."""
-    repos = await _build_sorted_repos(sort, dir, include_checks, include_stale)
+    repos = await _build_sorted_repos(sort, dir, include_checks, include_stale, selection)
     return templates.TemplateResponse(
         request,
         "partials/dashboard_list.html",
@@ -970,9 +1040,10 @@ async def dashboard_stats_partial(
     request: Request,
     include_checks: bool = True,
     include_stale: bool = True,
+    selection: SpaceSelection = Depends(html_space_selection),
 ) -> HTMLResponse:
     """Return the stats bar for HTMX swap, respecting the health-status toggle."""
-    repos = await _build_repo_viewmodels(include_checks, include_stale)
+    repos = await _build_repo_viewmodels(include_checks, include_stale, selection)
     totals = _compute_totals(repos)
     return templates.TemplateResponse(
         request,
@@ -982,8 +1053,10 @@ async def dashboard_stats_partial(
 
 
 @router.get("/partials/action-run/{run_id}", response_class=HTMLResponse)
-async def action_run_partial(request: Request, run_id: int) -> HTMLResponse:
-    """Return expanded action run details for inline expansion."""
+async def action_run_partial(
+    request: Request, run_id: int, selection: SpaceSelection = Depends(html_space_selection)
+) -> HTMLResponse:
+    """Return expanded action run details (results of the shown repos) for inline expansion."""
     from grimoire.actions.router import _engine as _actions_engine
 
     results_list: list[dict[str, Any]] = []
@@ -998,7 +1071,10 @@ async def action_run_partial(request: Request, run_id: int) -> HTMLResponse:
                     params={"run_id": run_id},
                 )
             ).all()
+        shown = _result_repo_filter(selection)
         for row in rows:
+            if not shown(row[1]):
+                continue
             results_list.append(
                 {
                     "id": row[0],
@@ -1021,10 +1097,16 @@ async def action_run_partial(request: Request, run_id: int) -> HTMLResponse:
 
 @router.get("/partials/action-results/{slug}", response_class=HTMLResponse)
 async def action_results_partial(
-    request: Request, slug: str, sort: str = "repo", dir: str = "asc"
+    request: Request,
+    slug: str,
+    sort: str = "repo",
+    dir: str = "asc",
+    selection: SpaceSelection = Depends(html_space_selection),
 ) -> HTMLResponse:
-    """Return per-action results grouped by run for inline expansion."""
+    """Return per-action results (of the shown repos) grouped by run for inline expansion."""
     from grimoire.actions.router import _engine as _actions_engine
+
+    shown = _result_repo_filter(selection)
 
     runs: list[dict[str, Any]] = []
     if _actions_engine is not None:
@@ -1059,7 +1141,10 @@ async def action_results_partial(
                     "passed": bool(r[3]),
                 }
                 for r in result_rows
+                if shown(r[1])
             ]
+            if result_rows and not results_list:
+                continue  # none of this run's repos are in the selection
 
             # Sort results within the run
             sort_keys: dict[str, Any] = {
@@ -1150,11 +1235,17 @@ async def check_output_partial(request: Request, result_id: int) -> HTMLResponse
 
 @router.get("/partials/check-results/{slug}", response_class=HTMLResponse)
 async def check_results_partial(
-    request: Request, slug: str, sort: str = "repo", dir: str = "asc"
+    request: Request,
+    slug: str,
+    sort: str = "repo",
+    dir: str = "asc",
+    selection: SpaceSelection = Depends(html_space_selection),
 ) -> HTMLResponse:
-    """Return per-check results grouped by run for inline expansion."""
+    """Return per-check results (of the shown repos) grouped by run for inline expansion."""
     from grimoire.checks.router import _checks
     from grimoire.checks.router import _engine as _checks_engine
+
+    shown = _result_repo_filter(selection)
 
     # Determine severity for this check
     severity = "error"
@@ -1197,7 +1288,10 @@ async def check_results_partial(
                     "timestamp": r[4],
                 }
                 for r in result_rows
+                if shown(r[1])
             ]
+            if result_rows and not results_list:
+                continue  # none of this run's repos are in the selection
 
             # Sort results within the run
             sort_keys: dict[str, Any] = {
@@ -1239,6 +1333,7 @@ async def check_results_partial(
             )
             async with AsyncSession(_checks_engine) as session:
                 orphan_rows = (await session.execute(orphan_query, params={"slug": slug})).all()
+            orphan_rows = [r for r in orphan_rows if shown(r[1])]
             if orphan_rows:
                 results_list = [
                     {
@@ -1349,7 +1444,7 @@ async def refresh_trigger(request: Request, background_tasks: BackgroundTasks) -
         raise HTTPException(status_code=500, detail="Refresh not configured")
 
     if not is_refresh_running():
-        from collections.abc import Awaitable, Callable
+        from collections.abc import Awaitable
 
         callback: Callable[[], Awaitable[None]] = _refresh_callback  # type: ignore[assignment]
         background_tasks.add_task(callback)
@@ -1534,8 +1629,9 @@ async def _build_backlog_items(
     min_score: float = 0.0,
     config_override: BacklogConfig | None = None,
     search: str = "",
+    selection: SpaceSelection = ALL_SPACES,
 ) -> list[BacklogItem]:
-    """Collect and optionally filter backlog items."""
+    """Collect and optionally filter backlog items of the repos in the space selection."""
     from grimoire.github.router import _cache, _repos
 
     check_targets, results_by_key = await _load_check_context(_repos)
@@ -1552,6 +1648,7 @@ async def _build_backlog_items(
         check_targets=check_targets,
         results_by_key=results_by_key,
         check_defs=_checks,
+        selection=selection,
     )
 
     # Apply filters
@@ -1581,11 +1678,13 @@ async def _build_backlog_items(
 
 
 @router.get("/backlog", response_class=HTMLResponse)
-async def backlog_page(request: Request) -> HTMLResponse:
-    """Backlog page — prioritised problem list across all repos."""
+async def backlog_page(
+    request: Request, selection: SpaceSelection = Depends(html_space_selection)
+) -> HTMLResponse:
+    """Backlog page — prioritised problem list across the repos of the space selection."""
     from grimoire.github.router import _last_refresh
 
-    items = await _build_backlog_items()
+    items = await _build_backlog_items(selection=selection)
 
     # Build summary counts per tier
     tier_counts: dict[str, int] = {}
@@ -1618,6 +1717,8 @@ async def backlog_page(request: Request) -> HTMLResponse:
             "backlog_config": _backlog_config,
             "time_ago": _time_ago,
             "last_refresh": _last_refresh,
+            # Explicit ?spaces= for the export URL, so the export matches what the page shows
+            "export_spaces": ",".join(sorted(selection.ids or ())),
         },
     )
 
@@ -1635,6 +1736,7 @@ async def backlog_items_partial(
     w_failing_check_warning: float = -1,
     w_stale_pr: float = -1,
     w_stale_issue: float = -1,
+    selection: SpaceSelection = Depends(html_space_selection),
 ) -> HTMLResponse:
     """Return filtered backlog items as an HTMX partial."""
     cat_list = [c for c in categories.split(",") if c] or None
@@ -1665,6 +1767,7 @@ async def backlog_items_partial(
         min_score=min_score,
         config_override=config_override,
         search=search,
+        selection=selection,
     )
 
     groups = None
@@ -1692,8 +1795,13 @@ async def backlog_export_markdown(
     categories: str = "",
     repos: str = "",
     min_score: float = 0.0,
+    selection: SpaceSelection = Depends(api_space_selection),
 ) -> PlainTextResponse:
-    """Export the backlog as Markdown text."""
+    """Export the backlog as Markdown text.
+
+    Like the JSON API it reads the space selection from ``?spaces=`` only (never the cookie);
+    the backlog page passes its own selection explicitly.
+    """
     cat_list = [c for c in categories.split(",") if c] or None
     repo_list = [r for r in repos.split(",") if r] or None
 
@@ -1701,6 +1809,7 @@ async def backlog_export_markdown(
         categories=cat_list,
         repos_filter=repo_list,
         min_score=min_score,
+        selection=selection,
     )
     md = export_markdown(items)
     return PlainTextResponse(md, media_type="text/markdown")

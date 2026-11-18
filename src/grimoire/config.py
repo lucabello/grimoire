@@ -125,7 +125,6 @@ class SpaceConfig(BaseModel):
     # Ids may not start with "_": that prefix is reserved for pseudo-spaces (_unassigned).
     id: str = Field(pattern=r"^[a-z0-9][a-z0-9-]*$")
     name: str
-    color: str | None = Field(default=None, pattern=r"^#[0-9a-fA-F]{6}$")
     description: str = ""
     repositories: list[RepoSource] = Field(min_length=1)
 

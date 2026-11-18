@@ -48,7 +48,7 @@ async def metrics():
 ```
 
 Metrics are updated:
-- After each data refresh cycle (repo health gauges).
+- After each data refresh cycle (repo health gauges) and at startup from the DB cache. `update_space_metrics(repos)` clears `grimoire_repository_space_info` and sets `{repo, space} = 1` for every space membership of every tracked repo (repos with no space get no series, so PromQL `unless` covers them; repos removed from a space disappear); the existing series are unchanged.
 - After each check/action execution (duration histograms).
 - After each GitHub API call (request counter, rate limit gauge).
 
@@ -292,6 +292,7 @@ Ensure all API routes have:
 - [ ] `.dockerignore` excludes workspace, .venv, .git, etc.
 - [ ] `GET /metrics` returns valid Prometheus text format with all defined metrics
 - [ ] Metrics are updated correctly after data refreshes, check runs, and action runs
+- [ ] `grimoire_repository_space_info{repo,space}` has one series per space membership (an overlapping repo yields two, an unassigned repo none) and series of removed memberships disappear; METRICS.md documents the join
 - [ ] Structured JSON logs are written to the configured log file
 - [ ] Logs are also emitted to stdout
 - [ ] Log entries include trace_id and span_id when within a request context

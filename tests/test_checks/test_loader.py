@@ -34,6 +34,17 @@ class TestLoadChecks:
         assert c.schedule == "0 */6 * * *"
         assert c.enabled is True
 
+    def test_spaces_parsed_and_default_to_empty(self, tmp_path: Path) -> None:
+        checks_dir = tmp_path / "checks"
+        checks_dir.mkdir()
+        base = "description: d\ntargets:\n  regex: '.*'\nscript: 'true'\n"
+        (checks_dir / "scoped.yaml").write_text(f"name: Scoped\nspaces: [a, b]\n{base}")
+        (checks_dir / "global.yaml").write_text(f"name: Global\n{base}")
+
+        by_slug = {c.slug: c for c in load_checks(tmp_path)}
+        assert by_slug["scoped"].spaces == ["a", "b"]
+        assert by_slug["global"].spaces == []
+
     def test_slug_derived_from_filename(self, tmp_path: Path) -> None:
         checks_dir = tmp_path / "checks"
         checks_dir.mkdir()

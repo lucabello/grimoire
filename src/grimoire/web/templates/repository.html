@@ -16,6 +16,16 @@
 <div class="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-4 mb-6">
     <div>
         <h1 class="text-3xl font-bold">{{ repo_name }}</h1>
+        {% if spaces %}
+        {# Plain text on purpose: per-row badges elsewhere were noise #}
+        <p class="text-sm mt-1" id="repo-spaces">
+            {%- if repo.spaces -%}
+            Spaces: {{ spaces | selectattr("id", "in", repo.spaces) | map(attribute="name") | join(", ") }}
+            {%- else -%}
+            Not in any space
+            {%- endif -%}
+        </p>
+        {% endif %}
         <div class="flex flex-wrap items-center gap-x-1 text-sm mt-2">
             {% for branch in branches %}
             {% if not loop.first %}<span class="opacity-40 mx-1">·</span>{% endif %}

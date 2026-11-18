@@ -48,15 +48,16 @@
     <div id="loading-bar"></div>
 
     <!-- Navbar -->
-    <div class="navbar bg-base-100 shadow-lg border-b border-primary/20">
-        <div class="flex-1">
+    <div class="navbar bg-base-100 shadow-lg border-b border-primary/20 flex-wrap gap-y-2">
+        <div class="flex-1 flex items-center gap-2 min-w-fit">
             <a href="{{ base_path }}/" class="btn btn-ghost text-xl gap-2">
                 <img src="{{ base_path }}/static/logo-nav.png" alt="Grimoire" class="h-10">
                 <span class="font-bold bg-gradient-to-r from-primary to-secondary bg-clip-text text-transparent">Grimoire</span>
             </a>
+            {% include "partials/space_selector.html" %}
         </div>
-        <div class="flex-none gap-2">
-            <ul class="menu menu-horizontal px-1">
+        <div class="flex-none gap-2 max-w-full overflow-x-auto">
+            <ul class="menu menu-horizontal px-1 flex-nowrap">
                 <li><a href="{{ base_path }}/" class="{% block nav_dashboard %}{% endblock %}">Dashboard</a></li>
                 <li><a href="{{ base_path }}/backlog" class="{% block nav_backlog %}{% endblock %}">Backlog</a></li>
                 <li><a href="{{ base_path }}/checks" class="{% block nav_checks %}{% endblock %}">Checks</a></li>

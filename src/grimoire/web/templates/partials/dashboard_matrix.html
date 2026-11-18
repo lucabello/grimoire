@@ -34,7 +34,7 @@
             {% for column_name in workflow_column_names %}
             <th class="text-center py-1">{{ column_name }}</th>
             {% endfor %}
-            <th class="text-center py-1">Checks</th>
+            {% if has_checks %}<th class="text-center py-1">Checks</th>{% endif %}
         </tr>
     </thead>
     <tbody>
@@ -90,7 +90,8 @@
             </td>
             {% endfor %}
 
-            {# ── Checks ── #}
+            {# ── Checks (the column only exists when checks are defined) ── #}
+            {% if has_checks %}
             <td class="text-center py-0.5">
                 {% if repo.checks_by_branch %}
                 <div class="flex items-center justify-center gap-0.5">
@@ -110,6 +111,7 @@
                 </div>
                 {% endif %}
             </td>
+            {% endif %}
         </tr>
         {% endfor %}
     </tbody>

@@ -123,3 +123,32 @@ async def test_startup_cache_freshness(
         m.startswith("Serving stale cache" if expect_refresh else "Using cached data")
         for m in messages
     )
+
+
+async def test_startup_fails_for_a_check_with_an_unknown_space(
+    tmp_config: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    with open(tmp_config, "a") as f:
+        f.write('spaces:\n  - {id: a, name: A, repositories: [{repo: "owner/repo1"}]}\n')
+    checks_dir = tmp_config.parent / "data" / "checks"
+    checks_dir.mkdir(parents=True, exist_ok=True)
+    (checks_dir / "lint.yaml").write_text(
+        "name: Lint\ndescription: d\nspaces: [missing]\ntargets:\n  regex: '.*'\nscript: 'true'\n"
+    )
+    monkeypatch.setenv("GRIMOIRE_CONFIG", str(tmp_config))
+
+    async def no_clone(self: WorkspaceManager, repos: object) -> None:
+        return None
+
+    monkeypatch.setattr(WorkspaceManager, "setup", no_clone)
+
+    app = create_app()
+    try:
+        with (
+            respx.mock,
+            pytest.raises(ValueError, match="Unknown space 'missing' in check 'lint'"),
+        ):
+            async with app.router.lifespan_context(app):
+                pass
+    finally:
+        update_cache([], [])

@@ -29,6 +29,7 @@ grimoire/
 │   ├── migrations/               # Alembic environment + revisions (versions/)
 │   ├── targeting.py              # Shared target resolution (list/regex/script)
 │   ├── prs.py                    # PR groups: matcher, grouping, page filters + API
+│   ├── spaces.py                 # Spaces: SpaceSelection, selection parsing, GET /api/spaces
 │   ├── github/
 │   │   ├── __init__.py
 │   │   ├── client.py             # Low-level GitHub API wrapper
@@ -52,12 +53,14 @@ grimoire/
 │   ├── web/
 │   │   ├── __init__.py
 │   │   ├── router.py             # HTML page routes
+│   │   ├── spaces.py             # HTML space selection: cookie, ?spaces=, template context
 │   │   ├── templates/            # Jinja2 templates
 │   │   │   ├── base.html
 │   │   │   ├── dashboard.html
 │   │   │   ├── repository.html
 │   │   │   ├── actions.html
-│   │   │   └── prs.html
+│   │   │   ├── prs.html
+│   │   │   └── partials/         # HTMX partials, incl. space_selector.html, _space_macros.html
 │   │   └── static/
 │   │       └── styles.css        # Tailwind output
 │   └── observability/
@@ -67,6 +70,7 @@ grimoire/
 ├── tests/
 │   ├── conftest.py
 │   ├── test_config.py
+│   ├── test_spaces.py
 │   ├── test_github/
 │   ├── test_workspace/
 │   ├── test_checks/
@@ -107,6 +111,8 @@ Module 1: Scaffolding & Configuration  ──(no deps)
     └──► Module 7: Observability & DevOps
 ```
 
+`grimoire/spaces.py` (space selection) sits at the Module 1 level: it depends only on `config` and `models`, and Modules 2 (repos API), 4/5 (check and action lists), 6 (pages) and `prs.py` use it. `observability/metrics.py` (Module 7) reads the space memberships of the tracked repos.
+
 ## Configuration File (`config.yaml`)
 
 ```yaml
@@ -125,7 +131,7 @@ git:
     format: "ssh"  # "ssh" or "gpg"
   ssh_known_hosts: "/keys/known_hosts"
 
-# Repositories to track
+# Repositories to track (optional when spaces provide at least one source)
 repositories:
   # Individual repo with specific branches
   - repo: "owner/repo-name"
@@ -146,6 +152,19 @@ repositories:
       - "org-name/excluded-repo"
     workflows:
       exclude: ["Release *"]       # applies to all repos from this team
+
+# Spaces: named slices of the tracked repositories (a view filter, not a security boundary).
+# A navbar selector filters every page by space; repos listed only above are "Unassigned".
+spaces:
+  - id: "platform"             # ^[a-z0-9][a-z0-9-]*$ ("_unassigned" is reserved)
+    name: "Platform"
+    description: "Platform team"
+    repositories:              # same sources as above: repo / team, branches, workflows
+      - repo: "owner/repo-name"
+      - team: "org-name/platform"
+
+# One space per file (same keys as an entry above); globs are relative to this file's directory
+space_files: ["spaces.d/*.yaml"]
 
 # PRs page: named groups of the open PRs of the tracked repos (with their CI state)
 prs:
@@ -174,25 +193,29 @@ log_file: "./grimoire.log"
 
 | Method | Path | Description |
 |--------|------|-------------|
-| `GET` | `/api/repos` | List all tracked repos with latest stats |
+| `GET` | `/api/repos` | List all tracked repos with latest stats (optional `?spaces=a,b`) |
+| `GET` | `/api/spaces` | List the spaces (and Unassigned when repos belong to none) with repo counts |
 | `GET` | `/api/repos/{owner}/{name}` | Get detailed stats for one repo |
 | `POST` | `/api/refresh` | Trigger an immediate data refresh |
-| `GET` | `/api/checks` | List all check definitions + enabled state |
+| `GET` | `/api/checks` | List all check definitions + enabled state (optional `?spaces=a,b`) |
 | `GET` | `/api/checks/{slug}/results` | Latest results for a check |
 | `POST` | `/api/checks/{slug}/run` | Trigger check (optional `?repo=`) |
 | `POST` | `/api/checks/{slug}/toggle` | Toggle check on/off |
-| `GET` | `/api/actions` | List all action definitions |
+| `GET` | `/api/actions` | List all action definitions (optional `?spaces=a,b`) |
 | `GET` | `/api/actions/{slug}/runs` | List run history |
 | `GET` | `/api/actions/{slug}/runs/{id}` | Get specific run details + logs |
 | `POST` | `/api/actions/{slug}/run` | Trigger action (optional `?repo=`); 409 if running |
-| `GET` | `/api/prs` | Open PRs of each configured PR group with CI, review and merge state (cache only; no GitHub calls) |
+| `GET` | `/api/prs` | Open PRs of each configured PR group with CI, review and merge state (cache only; no GitHub calls; optional `?spaces=a,b`) |
 | `GET` | `/health` | Health check (for Docker HEALTHCHECK / k8s probes) |
+
+`?spaces=` takes comma-separated space ids (`_unassigned` for repos in no space); the JSON API never reads the `grimoire_spaces` cookie that the HTML pages use.
 
 Auto-generated OpenAPI docs are available at `/docs` (Swagger UI) and `/redoc`.
 
 ## Cross-Cutting Concerns
 
 - **Security:** Checks and actions execute arbitrary bash scripts. This is by design (self-hosted, user-provided scripts). The application should never be exposed to untrusted users.
+- **Spaces:** A view filter, not isolation. One token, git identity, workspace, DB, cache and scheduler serve every space; a repo in several spaces is fetched and cloned once (branches are unioned, workflow filters are per membership). Anyone who can edit the config or check/action scripts administers the whole instance. Authentication, per-space tokens and per-space display overrides are out of scope.
 - **Concurrency:** GitHub API calls and check executions use bounded concurrency (`asyncio.Semaphore(10)`) to avoid overwhelming the API or the host.
 - **Error handling:** Individual check/action failures never crash the application. Log errors, record failure in DB, continue with remaining repos. GitHub API failures are surfaced as per-repo warnings on the dashboard — never silent failures.
 - **Disk caching:** All GitHub data is persisted to SQLite. On startup, the app loads cached data and is immediately usable. Refreshes happen in the background. The dashboard always shows the `fetched_at` timestamp so the user knows data freshness.

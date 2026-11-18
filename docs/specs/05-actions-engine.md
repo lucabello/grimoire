@@ -26,6 +26,7 @@ script: |
   git push origin "$BRANCH" --force
   gh pr create --title "chore: update uv.lock" --body "Automated lockfile update" || true
 schedule: "0 0 * * 1"   # optional cron; omit for manual-only
+spaces: [platform]      # optional; space ids under which the action is listed; omit = global
 ```
 
 Scripts run via `/bin/sh` by default. Add a shebang to use a different interpreter (bash, python3, etc.):
@@ -73,7 +74,10 @@ class ActionDefinition(BaseModel):
     script: str
     schedule: str | None = None
     enabled: bool = True
+    spaces: list[str] = []  # listing only; never affects targeting
 ```
+
+**Spaces:** `spaces` lists the space ids under which the action is **listed** when the user filters by space; no `spaces` = global, always listed. It never changes targeting (`targets` still decides the repos, and a manual run uses them regardless of the selection). After `load_actions`, the app lifespan calls `validate_definition_spaces("action", actions, {space ids})`; an unknown id (or `_unassigned`) raises `ValueError` naming the action slug and the id.
 
 **Global actions:** When `targets` is omitted, the action runs its script once (not per-repo). The script executes in the workspace root directory with `GH_TOKEN` and other environment variables available. No `sync_repo()` or `reset_workdir()` is called. Results are stored with `repo_full_name="(global)"`.
 
@@ -161,7 +165,7 @@ async def run_action(
 
 | Method | Path | Description |
 |--------|------|-------------|
-| `GET` | `/api/actions` | List all action definitions |
+| `GET` | `/api/actions` | List action definitions. Optional `?spaces=a,b` keeps the actions listed under those spaces plus the global ones (empty `spaces`); `_unassigned` alone lists only the global ones. Each item exposes `spaces`. Never reads the cookie |
 | `GET` | `/api/actions/{slug}/runs` | List run history for an action (paginated, reverse chronological) |
 | `GET` | `/api/actions/{slug}/runs/{run_id}` | Get a specific run with per-repo results + logs |
 | `GET` | `/api/actions/{slug}/status` | Check if currently running: `{"slug": ..., "running": bool}` |
@@ -217,6 +221,7 @@ class ActionRunDetail(BaseModel):
 ## Acceptance Criteria
 
 - [ ] YAML action definitions are loaded and validated correctly
+- [ ] `spaces` parses and defaults to `[]`; an unknown space id fails startup naming the action and the id; `spaces` does not change targeting
 - [ ] Actions run sequentially across target repos
 - [ ] Full stdout/stderr is captured and stored per repo per run
 - [ ] Run history is persisted in the database with correct metadata

@@ -36,6 +36,7 @@ from grimoire.github.client import GitHubClient
 from grimoire.github.router import (
     _cache,
     _last_refresh,
+    get_tracked_repos,
     refresh_router,
     set_refresh_callback,
     update_cache,
@@ -51,10 +52,17 @@ from grimoire.github.service import (
 )
 from grimoire.models import TrackedRepository
 from grimoire.observability.logging import setup_logging
-from grimoire.observability.metrics import DATA_REFRESH_DURATION, update_repo_metrics
+from grimoire.observability.metrics import (
+    DATA_REFRESH_DURATION,
+    update_repo_metrics,
+    update_space_metrics,
+)
 from grimoire.observability.metrics import router as metrics_router
 from grimoire.prs import router as prs_router
 from grimoire.prs import set_prs_config
+from grimoire.security import cross_site_guard
+from grimoire.spaces import router as spaces_router
+from grimoire.spaces import set_spaces_config, validate_definition_spaces
 from grimoire.web.router import router as web_router
 from grimoire.web.router import (
     set_backlog_config,
@@ -62,6 +70,7 @@ from grimoire.web.router import (
     set_refresh_schedule,
     set_staleness_config,
 )
+from grimoire.web.spaces import space_cookie_middleware
 from grimoire.workspace.manager import WorkspaceManager
 
 logger = logging.getLogger(__name__)
@@ -111,6 +120,9 @@ async def lifespan(_app: FastAPI) -> AsyncIterator[None]:
 
     # Expose dashboard config to web layer
     set_dashboard_config(config.dashboard)
+
+    # Expose the spaces (and where to read the tracked repos from) to the API and web layer
+    set_spaces_config(config.spaces, get_tracked_repos)
 
     # Expose PR groups to the API and web layer
     set_prs_config(config.prs)
@@ -163,12 +175,14 @@ async def lifespan(_app: FastAPI) -> AsyncIterator[None]:
         if cached_repos and cache_is_fresh:
             update_cache(cached_repos, cached_stats, timestamp=newest_fetched_at)
             update_repo_metrics(cached_stats)
+            update_space_metrics(cached_repos)
             repos = cached_repos
             logger.info("Using cached data — %d repositories loaded", len(repos))
         elif cached_repos:
             # Stale cache — serve it immediately, refresh in background
             update_cache(cached_repos, cached_stats, timestamp=newest_fetched_at)
             update_repo_metrics(cached_stats)
+            update_space_metrics(cached_repos)
             repos = cached_repos
             need_background_refresh = True
             logger.info(
@@ -190,6 +204,7 @@ async def lifespan(_app: FastAPI) -> AsyncIterator[None]:
                 )
                 update_cache(cached_repos, cached_stats, timestamp=newest_fetched_at)
                 update_repo_metrics(cached_stats)
+                update_space_metrics(cached_repos)
                 repos = cached_repos
                 logger.info("Loaded %d repositories from cache (fallback)", len(cached_repos))
         except Exception:
@@ -206,6 +221,9 @@ async def lifespan(_app: FastAPI) -> AsyncIterator[None]:
     # Checks & actions
     checks = load_checks(config.data_dir)
     actions = load_actions(config.data_dir)
+    space_ids = {space.id for space in config.spaces}
+    validate_definition_spaces("check", checks, space_ids)
+    validate_definition_spaces("action", actions, space_ids)
 
     # Restore persisted toggle state from DB
     await restore_check_toggles(engine, checks)
@@ -220,6 +238,7 @@ async def lifespan(_app: FastAPI) -> AsyncIterator[None]:
             refreshed_repos, refreshed_stats = await refresh_all_stats(config, client)
         update_cache(refreshed_repos, refreshed_stats)
         update_repo_metrics(refreshed_stats)
+        update_space_metrics(refreshed_repos)
         await prune_stale_data(engine, refreshed_repos, config.workspace_dir)
 
         # Sync local clones with their remotes so worktrees have fresh data
@@ -299,12 +318,16 @@ def create_app() -> FastAPI:
         lifespan=lifespan,
     )
 
+    app.middleware("http")(space_cookie_middleware)
+    app.middleware("http")(cross_site_guard)
+
     # API routers
     app.include_router(repos_router, prefix="/api")
     app.include_router(refresh_router, prefix="/api")
     app.include_router(checks_router, prefix="/api")
     app.include_router(actions_router, prefix="/api")
     app.include_router(prs_router, prefix="/api")
+    app.include_router(spaces_router, prefix="/api")
 
     # Observability
     app.include_router(metrics_router)

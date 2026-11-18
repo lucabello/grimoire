@@ -10,7 +10,7 @@ Build the HTMX-powered web frontend with six pages: dashboard overview, individu
 
 Update `create_app()` to:
 
-- Mount all API routers (checks, actions, repos, prs).
+- Mount all API routers (checks, actions, repos, prs, spaces) and the space cookie middleware (6.12).
 - Mount web router for HTML pages.
 - Mount static files at `/static`.
 - Set up Jinja2 template environment.
@@ -43,6 +43,7 @@ def create_app() -> FastAPI:
     app.include_router(checks_router, prefix="/api")
     app.include_router(actions_router, prefix="/api")
     app.include_router(prs_router, prefix="/api")
+    app.include_router(spaces_router, prefix="/api")
     app.include_router(web_router)
     app.mount("/static", StaticFiles(directory="..."), name="static")
 
@@ -56,6 +57,17 @@ The app may be served under a path prefix (ASGI `root_path`, e.g. behind an ingr
 - Jinja: a context processor on `templates` injects `base_path` (`root_path` without trailing slash). Write `href="{{ base_path }}/repo/..."`, `hx-get="{{ base_path }}/partials/..."`.
 - JavaScript: `base.html` defines `const BASE_PATH = {{ base_path | tojson }};` — build URLs as `BASE_PATH + '/partials/...'`.
 - Server redirects (e.g. `HX-Redirect`) use `_base_path(request)`.
+
+### Cross-site request protection
+
+**File:** `src/grimoire/security.py` (`is_cross_site`, `cross_site_guard`), registered with `app.middleware("http")` in `create_app()`.
+
+State-changing routes are unauthenticated POSTs (check/action run and toggle, `/partials/*-run*`, `/partials/refresh-trigger`, `/api/backlog/save-weights`, `/api/refresh`). Without a guard, any website that a user of a private (VPN) instance visits can send them a simple cross-site POST and, for example, trigger an action that pushes with the instance token. The middleware answers `403 {"detail": "Cross-site requests are not allowed"}` to `POST`, `PUT`, `PATCH` and `DELETE` requests when:
+
+- `Sec-Fetch-Site` is present and is not `same-origin` or `none` (so `same-site` and `cross-site` are rejected); it decides on its own and does not depend on `Host`; or
+- `Sec-Fetch-Site` is absent, `Origin` is present and its host (`netloc`) differs from the request's `Host` header (an opaque `Origin: null` never matches). `X-Forwarded-Host` is not consulted: the app does not trust proxy-supplied hosts. A reverse proxy must therefore pass the original `Host` (the nginx example in the deploy guide does).
+
+Requests with neither header (curl, scripts, other services) and all `GET`/`HEAD`/`OPTIONS` requests are allowed. The app's own HTMX requests are same-origin and pass.
 
 ## 6.2 — Loading Page
 
@@ -125,7 +137,15 @@ Returns the `partials/loading_progress.html` template with current `RefreshProgr
 | **Last Activity** | Time since last commit across observed branches, e.g., `3d ago` | ✓ (by last commit time) |
 | **Branches** | Total count + stale count with link to GitHub branches page | — |
 | **Workflows** | Compact badge grid (see below) | ✓ (by number of failures) |
-| **Checks** | Compact badge grid (see below) | ✓ (by number of failures) |
+| **Checks** | Compact badge grid (see below). The column (header and cells) is only rendered when at least one check is defined (`has_checks`), like the Checks stat above | ✓ (by number of failures) |
+
+### Space filter
+
+The page, `GET /partials/dashboard-matrix`, `/partials/dashboard-list` and `/partials/dashboard-stats` read the HTML space selection (6.12) and `_build_repo_viewmodels(include_checks, include_stale, selection)` applies it:
+
+- Only repos with `selection.includes(repo)` are shown; the stats bar counts only those repos.
+- Workflow cells use `selection.workflow_visible(repo, workflow_name)`, so an overlapping repo shows the union of the filters of the selected spaces (only that space's workflows for a single space; every membership for All). Workflow group columns stay global and are not hidden when empty.
+- Rows carry no per-row space markers: the space selector says what is filtered (its button and tooltip name the selection), and the repository page (6.4) names a repo's spaces.
 
 ### View Switcher
 
@@ -253,6 +273,10 @@ This pattern is shared across all long-running operations:
 **Route:** `GET /repo/{owner}/{name}`
 **Template:** `templates/repository.html`
 
+### Spaces line
+
+When spaces are configured, a plain text line under the repository name (`#repo-spaces`) names the repo's spaces in config order (`Spaces: Alpha, Beta`), or says `Not in any space`. It is plain text, not badges, and absent when no spaces are configured.
+
 ### Sections
 
 **1. Header**
@@ -329,6 +353,15 @@ The "Run" button triggers the action via HTMX and reloads the page after 1.5s:
   Run
 </button>
 ```
+
+### Space filter (Checks and Actions pages)
+
+The Checks page, the Actions page and their partials (`/partials/check-results/{slug}`, `/partials/action-results/{slug}`, `/partials/action-run/{run_id}`) use the HTML selection (6.12):
+
+- **Listed:** definitions with empty `spaces` (global) or `spaces` intersecting the selection. All lists everything; `_unassigned` alone lists only the global ones.
+- **Results:** per-repo results are shown only for repos in the selection (`SpaceSelection.repo_name_filter()`, a predicate on the repo full name). Results of global actions (`GLOBAL_REPO == "(global)"`) are always shown. The pass/fail summary on each card and in each run header is computed over the shown results; a run none of whose repos is in the selection is not listed.
+- **Running is unchanged:** a manual or scheduled run uses the definition's `targets` whatever the selection. The run-status partials and run/toggle endpoints do not read the selection.
+- The list APIs (`GET /api/checks`, `GET /api/actions`) and `GET /api/checks/{slug}/results` accept `?spaces=` via `api_space_selection` and ignore the cookie.
 
 ## 6.6 — Checks Page
 
@@ -449,8 +482,14 @@ Individual items can be copied via the per-row clipboard button.
 |----------|--------|---------|
 | `GET /backlog` | GET | Full page. Accepts `?group_by=repo` or `?group_by=type` for grouped views. |
 | `GET /partials/backlog-items` | GET | HTMX partial (item list). Accepts query params: `category`, `repo`, `group_by` (`repo` or `type`), `search`, weight overrides. |
-| `GET /api/backlog/export` | GET | Full backlog as Markdown text |
+| `GET /api/backlog/export` | GET | Full backlog as Markdown text. Accepts `?categories=`, `?repos=`, `?min_score=` and `?spaces=` (query only, never the cookie) |
 | `POST /api/backlog/save-weights` | POST | Persists category weight changes to `config.yaml` and reloads in-memory config |
+
+### Space filter
+
+`build_backlog_items(..., selection)` only collects items of repos with `selection.includes(repo)`; failing-workflow items additionally require `selection.workflow_visible(repo, workflow_name)`. Scoring, weights and ranking are unaffected: the selection only changes which items exist. Rows and repo-group headers carry no per-row space markers.
+
+`GET /backlog` and `GET /partials/backlog-items` use the HTML selection (6.12). The export is called from the page JavaScript and must export what the page shows, but `/api/backlog/export` is an API endpoint that reads `?spaces=` only: the page therefore adds `?spaces=<ids>` (empty for All, so no parameter) to the "Copy as Markdown" request and to the "Download .md file" link, which keeps the export URL reproducible. `POST /api/backlog/save-weights` is unchanged (it rewrites the main config file; `space_files` are never touched).
 
 ### Item Sources
 
@@ -568,9 +607,16 @@ The pulls list has no CI state. For the PRs that match a group, `refresh_all_sta
 - **Sorting:** `attention` (default: failure, pending, no checks or unknown, then success; oldest first within each), `repo`, `age` (oldest first), `updated` (most recent first).
 - **Tables** scroll horizontally on small screens. Empty states: see 6.10.
 
+### Space filter
+
+`GET /prs` and `GET /partials/prs` use the HTML selection (6.12). `stats_in_selection(stats, repos, selection)` (`prs.py`) keeps the stats of repos with `selection.includes(repo)` before `build_group_results`, so a PR is shown only if its repo is in the selection and the group matchers (including a group's `repos` scope) still apply on top. PR groups themselves stay global.
+
+- Under a narrower selection, groups left with no PRs are hidden, including from the group select; when none is left the page says "No open PRs in the selected spaces match any group". Under All, an empty group still says "No open PRs match this group 🎉". The "No PR groups configured" screen depends on the configuration only (`has_groups`).
+- Rows carry no per-row space markers.
+
 ### API
 
-`GET /api/prs` reads the in-memory cache only (no GitHub calls) and returns the groups in config order:
+`GET /api/prs` reads the in-memory cache only (no GitHub calls) and returns the groups in config order. The optional `?spaces=a,b` (`api_space_selection`, never the cookie) keeps only the PRs of repos in those spaces; every group is still returned, with `total: 0` and an empty `pull_requests` list when nothing is left:
 
 ```json
 {
@@ -591,9 +637,36 @@ The pulls list has no CI state. For the PRs that match a group, `refresh_all_sta
 
 `author` is the raw login. `ci` (`success`, `failure`, `pending`, `none`), `review_decision`, `merge_state` and `ci_checked_at` are `null` when GraphQL has not reported them. A PR matching several groups appears in each. There are no query filters: consumers filter the list themselves.
 
+## 6.12 — Space selection (HTML)
+
+**Files:** `src/grimoire/web/spaces.py`, `src/grimoire/spaces.py` (selection model, spec 1.3), context processor in `web/router.py`, middleware registered in `app.py`.
+
+HTML pages and HTMX partials filter by the user's space selection; the JSON API does not read it (`?spaces=` only, spec 1.3).
+
+- `html_space_selection(request) -> SpaceSelection` (dependency used by page routes): `?spaces=a,b` beats the cookie `grimoire_spaces` (comma-separated ids). Unknown ids are dropped; an empty selection or every space selected is All.
+- A request with a `?spaces=` parameter also saves the normalised selection in the cookie `grimoire_spaces` (`Max-Age` one year, `SameSite=Lax`, `Path` = the app `root_path` or `/`; not `HttpOnly`, the navbar script writes it too). All is saved as an empty value. FastAPI does not merge cookies set through a dependency into a directly returned `TemplateResponse`, so the dependency only records the value on `request.state` and `space_cookie_middleware` appends the `Set-Cookie` header to the response. The selection is resolved once per request.
+- The context processor on `templates` gives every template `spaces` (the shape of `GET /api/spaces`: `id`, `name`, `description`, `repo_count`; empty when no spaces are configured), and `space_selection` (a `SpaceSelection`; `.ids` is `None` for All).
+### Navbar selector and badges
+
+**Files:** `templates/base.html` (includes the selector inside the left navbar block, next to the logo), `templates/partials/space_selector.html`, `templates/partials/_space_macros.html`, `templates/repository.html`.
+
+- Hidden entirely when `spaces` is empty (installs without spaces see no change).
+- **Markup.** A DaisyUI `<details class="dropdown">` whose `<summary>` is the button. This replaced a focus-based `div[tabindex][role=button]` wrapper (with `shrink-0` and a `data-cookie-path` attribute) that one user's browser did not render at all; the wrapper must not carry `shrink-0` or a `data-cookie-path` attribute. The cookie path comes from the `BASE_PATH` constant defined in `base.html`.
+- **Button.** Outlined (not ghost), with a layer icon, never wrapped (`whitespace-nowrap`); the navbar wraps (`flex-wrap`) so on narrow screens the nav links move to a second row. The label is **"Spaces"** under All, the **space's name** when exactly one is selected and **"Spaces (N)"** for several; the tooltip lists the selected names. It follows the checkboxes live, before the page reloads; server rendering and script use the same rules.
+- **No colour.** Spaces are told apart by their name only (colour is not an accessible channel on its own), so there is no `color` setting and no colour dots anywhere. The Unassigned row is set apart by italics. Secondary text (counts, hints) keeps at least `opacity-80` so it stays legible.
+- **Dropdown.** A search box ("Search spaces", filters the rows by name; All / None and the selection still apply to every space; "No matching spaces" when nothing matches); header "Spaces" with **All** / **None**; one row per space; the Unassigned row (in italics) only when `GET /api/spaces` offers it; footer hint "Tick to combine spaces, click a name to show only that one. Saved in this browser." It closes on a click outside or Escape. Each row has two controls:
+  - the **checkbox** (its `<label>` wraps only the box, so the padding around it toggles too) is the individual toggle;
+  - the **rest of the row**, a single `<button data-space-only>` holding the name and the repo count spelled out ("3 repos", "1 repo"), shows **only** that space. There is no separate "only" link.
+- **Applying.** **All**, **None** and a **row click** (show only that space) are decisive: they write the cookie and reload at once. Ticking boxes accumulates and applies when the dropdown closes. None selects nothing, which means All. The cookie is written from JavaScript with the attributes the server uses (`Path` = `BASE_PATH` or `/`, `Max-Age` one year, `SameSite=Lax`; nothing or every row checked is an empty value), and the page reloads so every page and HTMX partial picks it up. The reload drops `?spaces=` from the URL because it would override the cookie.
+- **No badges or chips per row.** The dashboard, backlog and PRs rows carry no space markers (they were noise). The repository page (6.4) shows a plain text line under the title instead: `Spaces: Alpha, Beta` (config order), or `Not in any space` for an unassigned repo; it is absent when no spaces are configured.
+
+- Page tasks filter with `space_selection.includes(repo)` and `space_selection.workflow_visible(repo, workflow_name)`.
+
 ## Acceptance Criteria
 
 - [ ] Dashboard renders all tracked repos with correct stats
+- [ ] The dashboard, its partials and the stats bar show only the repos of the space selection; an overlapping repo shows the union of the selected spaces' workflows
+- [ ] The dashboard table has a Checks column only when at least one check is defined; header and rows always have the same number of cells
 - [ ] Sorting works for all columns (name, issues, stale issues, PRs, stale PRs, workflow failures, check failures)
 - [ ] Multi-branch repos show per-branch workflow/check status in a single row
 - [ ] Per-repo warnings display as amber indicators with hover text
@@ -601,6 +674,7 @@ The pulls list has no CI state. For the PRs that match a group, `refresh_all_sta
 - [ ] Repository detail page shows stale issues/PRs, workflow table, check results
 - [ ] Check output is expandable on the detail page
 - [ ] Actions page lists all available actions with run buttons
+- [ ] Checks and Actions pages list global definitions plus those of the selected spaces, show results and summary counts only for the selected repos, and a manual run under a narrow selection still runs on all targets; the APIs ignore the cookie
 - [ ] Run history shows all runs with correct metadata
 - [ ] Action run details expand inline with per-repo results and logs
 - [ ] Backlog page lists all problems sorted by priority score
@@ -609,9 +683,14 @@ The pulls list has no CI state. For the PRs that match a group, `refresh_all_sta
 - [ ] Backlog export renders correct Markdown with tier grouping
 - [ ] Backlog per-item copy-to-clipboard works
 - [ ] Backlog filters by category and repo work correctly
+- [ ] The backlog page, partial and export only list items of the selected spaces' repos (and only the workflows the selected spaces allow); scores are unchanged; the export honours `?spaces=` and ignores the cookie
 - [ ] A group with `authors: ["app/renovate", "app/dependabot", "observability-noctua-bot"]` matches the PRs of `renovate[bot]`, `dependabot[bot]` and `observability-noctua-bot` and no others
 - [ ] PRs page shows one section per group with CI badge, repository, linked title, labels, draft and auto-merge badges, author, review/merge badges, age and last update; chips, search, `ci` filter, sort and group selection work through HTMX; all empty states render
+- [ ] The PRs page and partial show only the PRs of the selected spaces' repos and hide groups left empty; `GET /api/prs?spaces=` filters the PRs, keeps every group and ignores the cookie
 - [ ] `GET /api/prs` returns the groups with their PRs without GitHub calls; `/maintenance` and `/api/maintenance/groups` are gone
+- [ ] `?spaces=` beats the `grimoire_spaces` cookie on HTML pages and is saved to it (Max-Age 1 year, SameSite=Lax, Path = root_path); unknown ids are dropped; `/api/*` ignores the cookie; `GET /api/spaces` lists the spaces, plus Unassigned only when unassigned repos exist
+- [ ] The navbar selector is absent without spaces; the button reads "Spaces" / the name / "Spaces (N)"; no colour is used for spaces; ticking a checkbox toggles one space, clicking a row shows only that space, All and None work; the selection survives reload and browser restart; it works under `--root-path`
+- [ ] A cross-site `POST` (foreign `Origin`, or `Sec-Fetch-Site: cross-site`/`same-site`) to any state-changing route is rejected with 403 and changes nothing; same-origin, `Sec-Fetch-Site: none` and header-less requests are allowed; `GET` is unaffected
 - [ ] HTMX partial updates work without full page reloads
 - [ ] Pages render correctly in both light and dark mode
 - [ ] Pages are responsive (usable on tablet/mobile, scrollable tables)

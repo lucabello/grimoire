@@ -22,6 +22,9 @@ data/actions/
 | `script` | string | Yes | — | Bash script to execute |
 | `schedule` | string (cron) | No | `null` | Cron schedule; `null` = manual-only |
 | `enabled` | boolean | No | `true` | Whether the action runs on schedule |
+| `spaces` | list of strings | No | `[]` | Space ids under which the action is listed; empty = listed under every space |
+
+`spaces` only controls where the action is **listed** when you filter by space. It does not change which repositories the action runs against: `targets` alone decides that, and a manual run uses the targets whatever the selection. Every id must be defined in the configuration's `spaces`, otherwise Grimoire refuses to start and names the action and the id.
 
 ## Target spec {: #target-spec }
 
