@@ -278,6 +278,20 @@ class ActionRepoResult(BaseModel):
     output: str
 ```
 
+### Spaces (`grimoire/spaces.py`)
+
+**File:** `src/grimoire/spaces.py` — depends only on `config` and `models`. Spaces are a **view filter**, not a security boundary (one token, workspace, DB and cache serve every space).
+
+- `UNASSIGNED = "_unassigned"` — pseudo-space of the repos with no space membership (only the top-level `repositories:`). Real ids cannot start with `_`. It is offered only when such repos exist and at least one space is configured.
+- `SpaceSelection(ids: frozenset[str] | None)` — `None` is All.
+  - `includes(repo)`: All → true; otherwise true if `repo.spaces` intersects `ids`, or `_unassigned` is selected and the repo has no space.
+  - `workflow_visible(repo, workflow_name)`: considers the memberships of the selected spaces (All → every membership; `_unassigned` → the `space=None` memberships of an unassigned repo) and is true if any of them allows the workflow (`RepoMembership.allows`, the shared fnmatch helper `workflow_matches_filter` in `models.py`). A repo without memberships shows every workflow.
+- `parse_space_ids(raw, known) -> frozenset[str] | None` — comma-separated ids; unknown ids are dropped; an empty result or every known id (including `_unassigned` when offered) normalises to All (`None`).
+- `set_spaces_config(spaces, repos_provider)` — setter called by the app lifespan (`repos_provider` returns the current tracked repos, `github.router.get_tracked_repos`). `list_spaces()` returns `SpaceInfo(id, name, color, description, repo_count)` for every configured space, plus the Unassigned entry (`name="Unassigned"`) when unassigned repos exist; empty when no spaces are configured.
+- `api_space_selection` — FastAPI dependency reading **only** `?spaces=` (default All); JSON `/api/*` endpoints never read the cookie.
+- `router` — `GET /api/spaces` → `list[SpaceInfo]`.
+- `validate_definition_spaces(kind, definitions, space_ids)` — startup validation of the `spaces:` field of checks and actions (specs 4 and 5).
+
 ## 1.4 — Database Setup
 
 **File:** `src/grimoire/database.py`

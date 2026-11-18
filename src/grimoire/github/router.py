@@ -47,6 +47,11 @@ def update_cache(
     _last_refresh = timestamp or datetime.now(tz=__import__("datetime").timezone.utc)
 
 
+def get_tracked_repos() -> list[TrackedRepository]:
+    """The currently tracked repositories (from the in-memory cache)."""
+    return list(_repos.values())
+
+
 def _build_summary(repo: TrackedRepository, stats: RepositoryStats) -> RepoSummary:
     workflow_failures = sum(1 for w in stats.workflows if w.status == "failure")
     return RepoSummary(

@@ -36,6 +36,7 @@ from grimoire.github.client import GitHubClient
 from grimoire.github.router import (
     _cache,
     _last_refresh,
+    get_tracked_repos,
     refresh_router,
     set_refresh_callback,
     update_cache,
@@ -55,7 +56,8 @@ from grimoire.observability.metrics import DATA_REFRESH_DURATION, update_repo_me
 from grimoire.observability.metrics import router as metrics_router
 from grimoire.prs import router as prs_router
 from grimoire.prs import set_prs_config
-from grimoire.spaces import validate_definition_spaces
+from grimoire.spaces import router as spaces_router
+from grimoire.spaces import set_spaces_config, validate_definition_spaces
 from grimoire.web.router import router as web_router
 from grimoire.web.router import (
     set_backlog_config,
@@ -63,6 +65,7 @@ from grimoire.web.router import (
     set_refresh_schedule,
     set_staleness_config,
 )
+from grimoire.web.spaces import space_cookie_middleware
 from grimoire.workspace.manager import WorkspaceManager
 
 logger = logging.getLogger(__name__)
@@ -112,6 +115,9 @@ async def lifespan(_app: FastAPI) -> AsyncIterator[None]:
 
     # Expose dashboard config to web layer
     set_dashboard_config(config.dashboard)
+
+    # Expose the spaces (and where to read the tracked repos from) to the API and web layer
+    set_spaces_config(config.spaces, get_tracked_repos)
 
     # Expose PR groups to the API and web layer
     set_prs_config(config.prs)
@@ -303,12 +309,15 @@ def create_app() -> FastAPI:
         lifespan=lifespan,
     )
 
+    app.middleware("http")(space_cookie_middleware)
+
     # API routers
     app.include_router(repos_router, prefix="/api")
     app.include_router(refresh_router, prefix="/api")
     app.include_router(checks_router, prefix="/api")
     app.include_router(actions_router, prefix="/api")
     app.include_router(prs_router, prefix="/api")
+    app.include_router(spaces_router, prefix="/api")
 
     # Observability
     app.include_router(metrics_router)

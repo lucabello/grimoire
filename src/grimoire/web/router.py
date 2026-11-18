@@ -41,6 +41,7 @@ from grimoire.web.backlog import (
     group_by_repo,
     group_by_type,
 )
+from grimoire.web.spaces import space_context
 
 router = APIRouter(tags=["web"])
 
@@ -52,7 +53,10 @@ def _base_path(request: Request) -> str:
 
 templates = Jinja2Templates(
     directory=str(Path(__file__).parent / "templates"),
-    context_processors=[lambda request: {"base_path": _base_path(request)}],
+    context_processors=[
+        lambda request: {"base_path": _base_path(request)},
+        space_context,
+    ],
 )
 templates.env.globals["VERSION"] = version("grimoire-dashboard")
 

@@ -10,7 +10,7 @@ Build the HTMX-powered web frontend with six pages: dashboard overview, individu
 
 Update `create_app()` to:
 
-- Mount all API routers (checks, actions, repos, prs).
+- Mount all API routers (checks, actions, repos, prs, spaces) and the space cookie middleware (6.12).
 - Mount web router for HTML pages.
 - Mount static files at `/static`.
 - Set up Jinja2 template environment.
@@ -43,6 +43,7 @@ def create_app() -> FastAPI:
     app.include_router(checks_router, prefix="/api")
     app.include_router(actions_router, prefix="/api")
     app.include_router(prs_router, prefix="/api")
+    app.include_router(spaces_router, prefix="/api")
     app.include_router(web_router)
     app.mount("/static", StaticFiles(directory="..."), name="static")
 
@@ -591,6 +592,17 @@ The pulls list has no CI state. For the PRs that match a group, `refresh_all_sta
 
 `author` is the raw login. `ci` (`success`, `failure`, `pending`, `none`), `review_decision`, `merge_state` and `ci_checked_at` are `null` when GraphQL has not reported them. A PR matching several groups appears in each. There are no query filters: consumers filter the list themselves.
 
+## 6.12 — Space selection (HTML)
+
+**Files:** `src/grimoire/web/spaces.py`, `src/grimoire/spaces.py` (selection model, spec 1.3), context processor in `web/router.py`, middleware registered in `app.py`.
+
+HTML pages and HTMX partials filter by the user's space selection; the JSON API does not read it (`?spaces=` only, spec 1.3).
+
+- `html_space_selection(request) -> SpaceSelection` (dependency used by page routes): `?spaces=a,b` beats the cookie `grimoire_spaces` (comma-separated ids). Unknown ids are dropped; an empty selection or every space selected is All.
+- A request with a `?spaces=` parameter also saves the normalised selection in the cookie `grimoire_spaces` (`Max-Age` one year, `SameSite=Lax`, `Path` = the app `root_path` or `/`; not `HttpOnly`, the navbar script writes it too). All is saved as an empty value. FastAPI does not merge cookies set through a dependency into a directly returned `TemplateResponse`, so the dependency only records the value on `request.state` and `space_cookie_middleware` appends the `Set-Cookie` header to the response. The selection is resolved once per request.
+- The context processor on `templates` gives every template `spaces` (the shape of `GET /api/spaces`: `id`, `name`, `color`, `description`, `repo_count`; empty when no spaces are configured) and `space_selection` (a `SpaceSelection`; `.ids` is `None` for All).
+- Page tasks filter with `space_selection.includes(repo)` and `space_selection.workflow_visible(repo, workflow_name)`.
+
 ## Acceptance Criteria
 
 - [ ] Dashboard renders all tracked repos with correct stats
@@ -612,6 +624,7 @@ The pulls list has no CI state. For the PRs that match a group, `refresh_all_sta
 - [ ] A group with `authors: ["app/renovate", "app/dependabot", "observability-noctua-bot"]` matches the PRs of `renovate[bot]`, `dependabot[bot]` and `observability-noctua-bot` and no others
 - [ ] PRs page shows one section per group with CI badge, repository, linked title, labels, draft and auto-merge badges, author, review/merge badges, age and last update; chips, search, `ci` filter, sort and group selection work through HTMX; all empty states render
 - [ ] `GET /api/prs` returns the groups with their PRs without GitHub calls; `/maintenance` and `/api/maintenance/groups` are gone
+- [ ] `?spaces=` beats the `grimoire_spaces` cookie on HTML pages and is saved to it (Max-Age 1 year, SameSite=Lax, Path = root_path); unknown ids are dropped; `/api/*` ignores the cookie; `GET /api/spaces` lists the spaces, plus Unassigned only when unassigned repos exist
 - [ ] HTMX partial updates work without full page reloads
 - [ ] Pages render correctly in both light and dark mode
 - [ ] Pages are responsive (usable on tablet/mobile, scrollable tables)
