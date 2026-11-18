@@ -184,7 +184,6 @@ class RepoViewModel:
     workflows_by_branch: dict[str, list[WorkflowStatus]]
     checks_by_branch: dict[str, list[dict[str, Any]]]
     workflow_columns: list[WorkflowColumn] = field(default_factory=list)
-    spaces: list[str] = field(default_factory=list)
     fetched_at: datetime | None = None
     last_commit_at: datetime | None = None
     total_branches: int = 0
@@ -566,7 +565,6 @@ async def _build_repo_viewmodels(
                 full_name=full_name,
                 branches=branches,
                 source=repo.source,
-                spaces=repo.spaces,
                 open_issues=stats.open_issues,
                 stale_issues=stats.stale_issues,
                 open_prs=stats.open_pull_requests,
@@ -911,7 +909,6 @@ def _build_prs_context(
         "counts": distinct_ci_counts(scoped),
         "has_data": bool(_cache),
         "no_space_matches": space_filtered and not all_results and bool(config.groups),
-        "repo_spaces": {name: repo.spaces for name, repo in _repos.items()},
         "ci_warnings": ci_warnings,
         "last_refresh": _last_refresh,
         "last_refresh_ago": _time_ago(_last_refresh) if _last_refresh else None,

@@ -1,5 +1,4 @@
 {% from "partials/_workflow_macros.html" import workflow_row %}
-{% from "partials/_space_macros.html" import space_badges with context %}
 <div class="flex flex-col gap-3">
 {% for repo in repos %}
 <div class="bg-base-100 rounded-lg shadow-sm hover:shadow-md transition-shadow {% if repo.health_status == 'error' %}border-l-4 border-error{% elif repo.health_status == 'warning' %}border-l-4 border-warning{% endif %}">
@@ -10,7 +9,6 @@
             <a href="{{ base_path }}/repo/{{ repo.full_name }}" class="link link-hover text-base font-semibold min-w-[200px]">
                 <span class="opacity-60">{{ repo.owner }}/</span>{{ repo.name }}
             </a>
-            {% if spaces %}<span class="inline-flex gap-2">{{ space_badges(repo) }}</span>{% endif %}
 
             <div class="flex flex-wrap gap-x-1 gap-y-1 text-sm font-mono-nums flex-1">
                 <span class="opacity-70">

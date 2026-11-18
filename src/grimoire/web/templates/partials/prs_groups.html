@@ -1,8 +1,6 @@
 {# PR groups partial — rendered inside #prs-content (page and HTMX partial).
    With oob, it also refreshes the "last updated" line and the form's hidden ci input. #}
 
-{% from "partials/_space_macros.html" import space_badges with context %}
-
 {% macro ci_icon(pr, ci_url, time_ago) -%}
 {% set as_of = ' (as of ' ~ time_ago(pr.ci_fetched_at) ~ ')' if pr.ci_fetched_at else '' %}
 {% if pr.ci_state == "success" %}
@@ -113,7 +111,6 @@
                     <a href="{{ base_path }}/repo/{{ item.repo }}" class="link link-hover font-semibold">
                         <span class="opacity-60">{{ item.repo.split('/')[0] }}/</span>{{ item.repo.split('/')[1] }}
                     </a>
-                    {% if spaces %}<span class="inline-flex gap-2 ml-1">{{ space_badges({'spaces': repo_spaces.get(item.repo, [])}) }}</span>{% endif %}
                 </td>
                 <td class="min-w-[18rem] max-w-xl">
                     <a href="{{ pr.url }}" target="_blank" rel="noopener noreferrer" class="hover:text-primary font-medium">

@@ -1,5 +1,4 @@
 {% from "partials/_workflow_macros.html" import workflow_icon %}
-{% from "partials/_space_macros.html" import space_badges with context %}
 <table class="table table-xs w-full">
     <thead>
         <tr class="text-xs uppercase tracking-wider">
@@ -56,7 +55,6 @@
             <td class="py-0.5">
                 <a href="{{ base_path }}/repo/{{ repo.full_name }}" class="link link-hover text-sm"
                    title="{{ repo.full_name }}">{{ repo.full_name }}</a>
-                {% if spaces %}<span class="ml-2 inline-flex gap-2">{{ space_badges(repo) }}</span>{% endif %}
             </td>
 
             {# ── Issues ── #}

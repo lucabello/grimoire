@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import math
 import re
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from datetime import datetime, timezone
 from enum import Enum
 from fnmatch import fnmatch
@@ -69,7 +69,6 @@ class BacklogItem:
     # Extra context for rendering
     branch: str = ""
     number: int = 0  # PR or issue number
-    spaces: list[str] = field(default_factory=list)  # space ids of the repo, for badges
 
     @property
     def category_label(self) -> str:
@@ -425,8 +424,6 @@ def build_backlog_items(
                 repo, branches, check_targets, results_by_key, check_defs, config, now
             ),
         ]
-        for item in repo_items:
-            item.spaces = repo.spaces
         all_items.extend(repo_items)
 
     all_items.sort(key=lambda item: item.score, reverse=True)

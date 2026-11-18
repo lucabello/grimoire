@@ -3,7 +3,6 @@
 {% block nav_dashboard %}active{% endblock %}
 {% block content %}
 {% from "partials/_workflow_macros.html" import workflow_row %}
-{% from "partials/_space_macros.html" import space_badges with context %}
 
 {# ── Breadcrumb ────────────────────────────────────────────────────── #}
 <div class="breadcrumbs text-sm mb-4">
@@ -17,8 +16,15 @@
 <div class="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-4 mb-6">
     <div>
         <h1 class="text-3xl font-bold">{{ repo_name }}</h1>
-        {% if spaces and repo.spaces %}
-        <div class="flex flex-wrap items-center gap-x-3 gap-y-1 mt-1">{{ space_badges(repo) }}</div>
+        {% if spaces %}
+        {# Plain text on purpose: per-row badges elsewhere were noise #}
+        <p class="text-sm mt-1" id="repo-spaces">
+            {%- if repo.spaces -%}
+            Spaces: {{ spaces | selectattr("id", "in", repo.spaces) | map(attribute="name") | join(", ") }}
+            {%- else -%}
+            Not in any space
+            {%- endif -%}
+        </p>
         {% endif %}
         <div class="flex flex-wrap items-center gap-x-1 text-sm mt-2">
             {% for branch in branches %}

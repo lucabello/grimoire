@@ -112,11 +112,10 @@ class TestHtml:
         total = html.split("Total")[1].split("</button>")[0]
         assert ">1<" in total.replace(" ", "").replace("\n", "")
 
-    async def test_badges_next_to_repo_names(
+    async def test_rows_carry_no_space_markers(
         self, prs: None, overlap_client: AsyncClient, path: str
     ) -> None:
-        html = (await overlap_client.get(path)).text
-        assert 'title="Space: Alpha"' in html and 'title="Space: Beta"' in html
+        assert "Space: " not in (await overlap_client.get(path)).text
 
     async def test_message_when_no_group_has_a_pr_in_the_selection(
         self, prs: None, overlap_client: AsyncClient, path: str

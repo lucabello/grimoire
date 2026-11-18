@@ -64,12 +64,6 @@ async def test_scores_do_not_depend_on_the_selection(overlap_spaces: None) -> No
     assert scores == sorted(scores, reverse=True)
 
 
-async def test_items_carry_the_spaces_of_their_repo(overlap_spaces: None) -> None:
-    items = await _build_backlog_items()
-    assert {i.spaces == ["a", "b"] for i in items if i.repo_full_name == "o/shared"} == {True}
-    assert all(i.spaces == [] for i in items if i.repo_full_name == "o/loose")
-
-
 class TestRoutes:
     async def test_page_and_partial_follow_the_cookie(self, overlap_client: AsyncClient) -> None:
         overlap_client.cookies.set(COOKIE_NAME, "b")
@@ -97,10 +91,10 @@ class TestRoutes:
         html = (await overlap_client.get("/partials/backlog-items?group_by=repo")).text
         assert "o/solo" in html and "o/loose" not in html
 
-    async def test_badges_next_to_repo_names(self, overlap_client: AsyncClient) -> None:
+    async def test_rows_carry_no_space_markers(self, overlap_client: AsyncClient) -> None:
         for query in ("", "?group_by=repo"):
             html = (await overlap_client.get(f"/partials/backlog-items{query}")).text
-            assert 'title="Space: Alpha"' in html, query
+            assert "Space: " not in html, query
 
 
 class TestExport:

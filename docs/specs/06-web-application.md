@@ -145,7 +145,7 @@ The page, `GET /partials/dashboard-matrix`, `/partials/dashboard-list` and `/par
 
 - Only repos with `selection.includes(repo)` are shown; the stats bar counts only those repos.
 - Workflow cells use `selection.workflow_visible(repo, workflow_name)`, so an overlapping repo shows the union of the filters of the selected spaces (only that space's workflows for a single space; every membership for All). Workflow group columns stay global and are not hidden when empty.
-- Rows show `space_badges(repo)` (a text pill with the name of each space) when spaces are configured; `RepoViewModel.spaces` carries the ids.
+- Rows carry no per-row space markers: the space selector and the active-filter bar say what is filtered, and the repository page (6.4) names a repo's spaces.
 
 ### View Switcher
 
@@ -272,6 +272,10 @@ This pattern is shared across all long-running operations:
 
 **Route:** `GET /repo/{owner}/{name}`
 **Template:** `templates/repository.html`
+
+### Spaces line
+
+When spaces are configured, a plain text line under the repository name (`#repo-spaces`) names the repo's spaces in config order (`Spaces: Alpha, Beta`), or says `Not in any space`. It is plain text, not badges, and absent when no spaces are configured.
 
 ### Sections
 
@@ -483,7 +487,7 @@ Individual items can be copied via the per-row clipboard button.
 
 ### Space filter
 
-`build_backlog_items(..., selection)` only collects items of repos with `selection.includes(repo)`; failing-workflow items additionally require `selection.workflow_visible(repo, workflow_name)`. Scoring, weights and ranking are unaffected: the selection only changes which items exist. Each `BacklogItem` carries `spaces` (the repo's space ids) and the rows and repo-group headers show `space_badges` when spaces are configured.
+`build_backlog_items(..., selection)` only collects items of repos with `selection.includes(repo)`; failing-workflow items additionally require `selection.workflow_visible(repo, workflow_name)`. Scoring, weights and ranking are unaffected: the selection only changes which items exist. Rows and repo-group headers carry no per-row space markers.
 
 `GET /backlog` and `GET /partials/backlog-items` use the HTML selection (6.12). The export is called from the page JavaScript and must export what the page shows, but `/api/backlog/export` is an API endpoint that reads `?spaces=` only: the page therefore adds `?spaces=<ids>` (empty for All, so no parameter) to the "Copy as Markdown" request and to the "Download .md file" link, which keeps the export URL reproducible. `POST /api/backlog/save-weights` is unchanged (it rewrites the main config file; `space_files` are never touched).
 
@@ -608,7 +612,7 @@ The pulls list has no CI state. For the PRs that match a group, `refresh_all_sta
 `GET /prs` and `GET /partials/prs` use the HTML selection (6.12). `stats_in_selection(stats, repos, selection)` (`prs.py`) keeps the stats of repos with `selection.includes(repo)` before `build_group_results`, so a PR is shown only if its repo is in the selection and the group matchers (including a group's `repos` scope) still apply on top. PR groups themselves stay global.
 
 - Under a narrower selection, groups left with no PRs are hidden, including from the group select; when none is left the page says "No open PRs in the selected spaces match any group". Under All, an empty group still says "No open PRs match this group 🎉". The "No PR groups configured" screen depends on the configuration only (`has_groups`).
-- The repository cell shows `space_badges` when spaces are configured.
+- Rows carry no per-row space markers.
 
 ### API
 
@@ -649,10 +653,10 @@ HTML pages and HTMX partials filter by the user's space selection; the JSON API 
 - Hidden entirely when `spaces` is empty (installs without spaces see no change).
 - **Markup.** A DaisyUI `<details class="dropdown">` whose `<summary>` is the button. This replaced a focus-based `div[tabindex][role=button]` wrapper (with `shrink-0` and a `data-cookie-path` attribute) that one user's browser did not render at all; the wrapper must not carry `shrink-0` or a `data-cookie-path` attribute. The cookie path comes from the `BASE_PATH` constant defined in `base.html`.
 - **Button.** Outlined (not ghost), with a layer icon, never wrapped (`whitespace-nowrap`); the navbar wraps (`flex-wrap`) so on narrow screens the nav links move to a second row. The label is **"Spaces"** under All, the **space's name** when exactly one is selected and **"Spaces (N)"** for several; the tooltip lists the selected names. It follows the checkboxes live, before the page reloads; server rendering and script use the same rules.
-- **No colour.** Spaces are told apart by their name only (colour is not an accessible channel on its own), so there is no `color` setting and no colour dots anywhere: not in the button, the dropdown rows or the badges. The Unassigned row is set apart by italics. Secondary text (counts, hints) keeps at least `opacity-80` so it stays legible.
+- **No colour.** Spaces are told apart by their name only (colour is not an accessible channel on its own), so there is no `color` setting and no colour dots anywhere. The Unassigned row is set apart by italics. Secondary text (counts, hints) keeps at least `opacity-80` so it stays legible.
 - **Dropdown.** A search box ("Search spaces", filters the rows by name; All / None and the selection still apply to every space; "No matching spaces" when nothing matches); header "Spaces" with **All** / **None**; one row per space with checkbox, name, the repo count spelled out ("3 repos", "1 repo") and an always-visible **only** action. The name is part of the checkbox's `<label>`: clicking it toggles the box exactly like clicking the box. Only **only** selects a single space; the Unassigned row (dashed dot, muted) only when `GET /api/spaces` offers it; footer hint "saved in this browser". It closes on a click outside or Escape.
 - **Applying.** **All**, **None** and **only** are decisive: they write the cookie and reload at once. Ticking boxes accumulates and applies when the dropdown closes. None selects nothing, which means All. The cookie is written from JavaScript with the attributes the server uses (`Path` = `BASE_PATH` or `/`, `Max-Age` one year, `SameSite=Lax`; nothing or every row checked is an empty value), and the page reloads so every page and HTMX partial picks it up. The reload drops `?spaces=` from the URL because it would override the cookie.
-- Macros (import with context): `space_badges(repo)` renders an outlined text pill with the name of each space of `repo.spaces` (`title="Space: <name>"`). The repository detail page shows them under the title; the page sections reuse them next to repo names.
+- **No badges or chips per row.** The dashboard, backlog and PRs rows carry no space markers (they were noise). The repository page (6.4) shows a plain text line under the title instead: `Spaces: Alpha, Beta` (config order), or `Not in any space` for an unassigned repo; it is absent when no spaces are configured.
 
 ### Active-filter bar
 

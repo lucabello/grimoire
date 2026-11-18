@@ -1,6 +1,5 @@
 {# Backlog items partial — rendered inside #backlog-items container #}
 
-{% from "partials/_space_macros.html" import space_badges with context %}
 {# ── Reusable item row macro ─────────────────────────────────────── #}
 {% macro item_row(item, show_repo=true) %}
 <div class="backlog-item bg-base-100 rounded-lg shadow-sm hover:shadow-md transition-all px-4 py-3" data-item-id="{{ item.item_id }}">
@@ -26,7 +25,6 @@
         <a href="{{ base_path }}/repo/{{ item.repo_full_name }}" class="text-sm font-semibold hover:text-primary whitespace-nowrap">
             {{ item.repo_full_name }}
         </a>
-        {% if spaces %}<span class="inline-flex gap-2">{{ space_badges(item) }}</span>{% endif %}
         {% endif %}
 
         {# Description #}
@@ -74,7 +72,6 @@
             <a href="{{ base_path }}/repo/{{ group.repo_full_name }}" class="font-semibold hover:text-primary" onclick="event.stopPropagation()">
                 {{ group.repo_full_name }}
             </a>
-            {% if spaces %}<span class="inline-flex gap-2">{{ space_badges(group.items[0]) }}</span>{% endif %}
             <span class="text-xs opacity-50">
                 {{ group.items | length }} item{{ 's' if group.items | length != 1 else '' }}
             </span>

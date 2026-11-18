@@ -51,7 +51,6 @@ async def test_overlapping_repo_shows_the_workflows_of_the_selected_spaces(
     assert names == visible
     assert {wf.name for c in shared.workflow_columns for wf in c.workflows} == visible
     assert shared.workflow_failures == failures
-    assert shared.spaces == ["a", "b"]
 
 
 async def _stat_values(overlap_client: AsyncClient) -> tuple[int, int]:
@@ -89,11 +88,10 @@ class TestHtml:
         assert "o/shared" in resp.text and "o/solo" not in resp.text
         assert resp.headers["set-cookie"].startswith(f"{COOKIE_NAME}=b;")
 
-    async def test_rows_show_space_badges(self, overlap_client: AsyncClient) -> None:
-        for path in ("/partials/dashboard-matrix", "/partials/dashboard-list"):
+    async def test_rows_carry_no_space_markers(self, overlap_client: AsyncClient) -> None:
+        for path in ("/", "/partials/dashboard-matrix", "/partials/dashboard-list"):
             html = (await overlap_client.get(path)).text
-            assert 'title="Space: Alpha"' in html, path
-            assert 'title="Space: Beta"' in html, path
+            assert "Space: " not in html, path
 
 
 class TestApi:

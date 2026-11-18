@@ -316,21 +316,35 @@ class TestSelectorUI:
         html = (await web_client.get("/")).text
         assert f'aria-label="Filter by space" title="{title}"' in html
 
-    async def test_repo_detail_shows_space_badges(
+    async def test_repo_detail_lists_the_spaces_as_plain_text(
         self, spaces: None, web_client: AsyncClient
     ) -> None:
         from tests.test_web.conftest import _populate_cache
 
         _populate_cache()
         for repo in get_tracked_repos():
-            repo.memberships = [RepoMembership(space="a"), RepoMembership(space="b")]
+            repo.memberships = [RepoMembership(space="b"), RepoMembership(space="a")]
         html = (await web_client.get("/repo/acme/api")).text
-        assert 'title="Space: Alpha"' in html
-        assert 'title="Space: Beta"' in html
+        line = html.split('id="repo-spaces">')[1].split("</p>")[0].strip()
+        assert line == "Spaces: Alpha, Beta"  # config order, no badges or chips
+        assert "badge" not in line
 
-    async def test_repo_detail_has_no_badges_without_spaces(self, web_client: AsyncClient) -> None:
+    async def test_repo_detail_of_a_repo_in_no_space(
+        self, spaces: None, web_client: AsyncClient
+    ) -> None:
+        from tests.test_web.conftest import _populate_cache
+
+        _populate_cache()
+        for repo in get_tracked_repos():
+            repo.memberships = [RepoMembership()]
+        html = (await web_client.get("/repo/acme/api")).text
+        assert html.split('id="repo-spaces">')[1].split("</p>")[0].strip() == "Not in any space"
+
+    async def test_repo_detail_has_no_spaces_line_without_spaces(
+        self, web_client: AsyncClient
+    ) -> None:
         set_spaces_config([])
-        assert "Space: " not in (await web_client.get("/repo/acme/api")).text
+        assert "repo-spaces" not in (await web_client.get("/repo/acme/api")).text
 
 
 class TestFilterBar:
