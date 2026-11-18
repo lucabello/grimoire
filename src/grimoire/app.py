@@ -62,6 +62,7 @@ from grimoire.prs import router as prs_router
 from grimoire.prs import set_prs_config
 from grimoire.spaces import router as spaces_router
 from grimoire.spaces import set_spaces_config, validate_definition_spaces
+from grimoire.security import cross_site_guard
 from grimoire.web.router import router as web_router
 from grimoire.web.router import (
     set_backlog_config,
@@ -318,6 +319,7 @@ def create_app() -> FastAPI:
     )
 
     app.middleware("http")(space_cookie_middleware)
+    app.middleware("http")(cross_site_guard)
 
     # API routers
     app.include_router(repos_router, prefix="/api")

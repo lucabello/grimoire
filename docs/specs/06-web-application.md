@@ -58,6 +58,17 @@ The app may be served under a path prefix (ASGI `root_path`, e.g. behind an ingr
 - JavaScript: `base.html` defines `const BASE_PATH = {{ base_path | tojson }};` — build URLs as `BASE_PATH + '/partials/...'`.
 - Server redirects (e.g. `HX-Redirect`) use `_base_path(request)`.
 
+### Cross-site request protection
+
+**File:** `src/grimoire/security.py` (`is_cross_site`, `cross_site_guard`), registered with `app.middleware("http")` in `create_app()`.
+
+State-changing routes are unauthenticated POSTs (check/action run and toggle, `/partials/*-run*`, `/partials/refresh-trigger`, `/api/backlog/save-weights`, `/api/refresh`). Without a guard, any website that a user of a private (VPN) instance visits can send them a simple cross-site POST and, for example, trigger an action that pushes with the instance token. The middleware answers `403 {"detail": "Cross-site requests are not allowed"}` to `POST`, `PUT`, `PATCH` and `DELETE` requests when:
+
+- `Sec-Fetch-Site` is present and is not `same-origin` or `none` (so `same-site` and `cross-site` are rejected); it decides on its own and does not depend on `Host`; or
+- `Sec-Fetch-Site` is absent, `Origin` is present and its host (`netloc`) differs from the request's `Host` header (an opaque `Origin: null` never matches). `X-Forwarded-Host` is not consulted: the app does not trust proxy-supplied hosts. A reverse proxy must therefore pass the original `Host` (the nginx example in the deploy guide does).
+
+Requests with neither header (curl, scripts, other services) and all `GET`/`HEAD`/`OPTIONS` requests are allowed. The app's own HTMX requests are same-origin and pass.
+
 ## 6.2 — Loading Page
 
 **Route:** `GET /` (when cache is empty and a refresh is running)
@@ -670,6 +681,7 @@ HTML pages and HTMX partials filter by the user's space selection; the JSON API 
 - [ ] `GET /api/prs` returns the groups with their PRs without GitHub calls; `/maintenance` and `/api/maintenance/groups` are gone
 - [ ] `?spaces=` beats the `grimoire_spaces` cookie on HTML pages and is saved to it (Max-Age 1 year, SameSite=Lax, Path = root_path); unknown ids are dropped; `/api/*` ignores the cookie; `GET /api/spaces` lists the spaces, plus Unassigned only when unassigned repos exist
 - [ ] The navbar selector is absent without spaces; labels for All / one / several are right; only, All and None work; the selection survives reload and browser restart; it works under `--root-path`
+- [ ] A cross-site `POST` (foreign `Origin`, or `Sec-Fetch-Site: cross-site`/`same-site`) to any state-changing route is rejected with 403 and changes nothing; same-origin, `Sec-Fetch-Site: none` and header-less requests are allowed; `GET` is unaffected
 - [ ] HTMX partial updates work without full page reloads
 - [ ] Pages render correctly in both light and dark mode
 - [ ] Pages are responsive (usable on tablet/mobile, scrollable tables)

@@ -65,7 +65,7 @@ docker run -d \
 
 ## Reverse proxy
 
-Grimoire listens on port 8000. Place it behind a reverse proxy for TLS termination.
+Grimoire listens on port 8000. Place it behind a reverse proxy for TLS termination. The proxy must forward the original `Host` header: Grimoire rejects state-changing requests whose `Origin` names another host (see [Cross-site requests](../reference/api.md#cross-site-requests)).
 
 ### Caddy
 
