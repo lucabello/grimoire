@@ -65,14 +65,28 @@ This only changes where the check is **listed**. Which repositories it runs on i
 
 Grimoire has no authentication. For a shared instance, put it behind a VPN or an identity-aware proxy, so that only your colleagues can reach it.
 
+- Make the proxy forward the original `Host` header. Grimoire rejects state-changing requests whose `Origin` names another host; see [Cross-site requests](../reference/api.md#cross-site-requests).
 - Let the proxy skip authentication for `/health` and `/metrics`, so that container probes and Prometheus keep working. If the instance is served [under a path prefix](deploy.md#serving-under-a-path-prefix-ingress), the paths carry the prefix (for example `/grimoire/metrics`).
 - Treat the instance as one trust domain: everyone who can sign in can see every space and trigger every check and action.
 
+## Choose which spaces to show
+
+Open the **Spaces** button next to the logo in the navigation bar. The button reads **Spaces** while everything is shown, the space's name when exactly one is selected, and **Spaces (2)**, **Spaces (3)** and so on for several. Hover it to see the selected names.
+
+- Tick or untick a checkbox to combine spaces. The selection applies when you close the dropdown, by clicking outside it or pressing `Esc`.
+- Click a space's name to show only that space. This applies at once.
+- Select **All** or **None** to show everything again. Selecting every entry in the list is the same.
+- Type in the search box to narrow a long list of spaces.
+
+To send a colleague a filtered view, give them a link with the space ids in `?spaces=`, for example `https://grimoire.example.com/?spaces=payments,platform`. Opening it applies the selection and saves it in their browser. Use `?spaces=` with no value to show everything. Unknown ids are ignored, and if you serve Grimoire under a path prefix, the link includes the prefix.
+
+The selection is stored per browser for a year. It is not a setting of the instance, so one person's choice does not change what others see.
+
 ## Check the result
 
-1. Open Grimoire and use the selector in the navigation bar to pick one space. Every page now lists only that space's repositories, and the dashboard counts only those.
+1. Open Grimoire and click a space's name in the selector to show only that space. The dashboard, backlog and PRs pages now cover only that space's repositories, and the dashboard counts only those. The Checks and Actions pages list the checks and actions that have no `spaces` or that name this space, and show results only for that space's repositories.
 2. Select two spaces. A repository that belongs to both appears once.
 3. Reload the page, or close and reopen the browser: the selection is kept in the browser for a year.
-4. Call `GET /api/spaces` to see the spaces and their repository counts, and `GET /api/repos?spaces=payments` to filter the API. The API ignores the selection saved in the browser; see [Filtering by space](../reference/api.md#filtering-by-space).
+4. Call `GET /api/spaces` to see the spaces and their repository counts, and `GET /api/repos/?spaces=payments` to filter the API. The API ignores the selection saved in the browser; see [Filtering by space](../reference/api.md#filtering-by-space).
 
-To report per space in Prometheus, join on the `repo` label with `grimoire_repository_space_info`; `METRICS.md` has the query.
+To report per space in Prometheus, join on the `repo` label with `grimoire_repository_space_info`. The [metrics reference on GitHub](https://github.com/lucabello/grimoire/blob/main/METRICS.md#spaces) has the query.

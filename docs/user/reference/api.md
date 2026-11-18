@@ -2,6 +2,8 @@
 
 Grimoire exposes a REST API. Interactive documentation is available at `/docs` (Swagger UI) and `/redoc` (ReDoc) when the application is running.
 
+The list endpoints `/api/repos/`, `/api/checks/` and `/api/actions/` end with a slash. Without it the server answers `307` and redirects to the slashed URL, which `curl` only follows with `-L`.
+
 ## Spaces
 
 Spaces are configured with [`spaces` and `space_files`](configuration.md#spaces). They filter what you see; they are not an access control.
@@ -14,9 +16,9 @@ The response is a list of `{id, name, description, repo_count}`. The Unassigned 
 
 ### Filtering by space
 
-`GET /api/repos`, `/api/checks`, `/api/checks/{slug}/results`, `/api/actions` and `/api/prs` accept `?spaces=` with comma-separated space ids, for example `?spaces=platform,web`. `_unassigned` selects the repositories that belong to no space.
+`GET /api/repos/`, `/api/checks/`, `/api/checks/{slug}/results`, `/api/actions/`, `/api/prs` and `/api/backlog/export` accept `?spaces=` with comma-separated space ids, for example `?spaces=platform,web`. `_unassigned` selects the repositories that belong to no space.
 
-- Without the parameter, or with no known id, the endpoint returns everything. Unknown ids are ignored. Selecting every space is the same as selecting none.
+- Without the parameter, or with no known id, the endpoint returns everything. Unknown ids are ignored. Selecting every entry that `GET /api/spaces` lists, including **Unassigned** when it is listed, is the same as selecting none.
 - The API **never** reads the selection cookie that the web pages use. Its result depends on the URL alone.
 - A repository is kept if it belongs to any selected space. The `workflow_failures` count of `/api/repos` only counts the workflows that the selected spaces' filters allow.
 - Checks and actions are listed when they have no `spaces` or when one of their `spaces` is selected; `_unassigned` alone lists only the ones without `spaces`. This only affects the list: it does not change which repositories a check or action runs against.
@@ -112,6 +114,21 @@ The endpoint reads Grimoire's cache: it makes no GitHub request. It returns the 
 Requests that change state (`POST`, `PUT`, `PATCH`, `DELETE`) are rejected with `403` when a browser reports that they come from another site: a `Sec-Fetch-Site` header other than `same-origin` or `none`, or, when that header is missing, an `Origin` header whose host is not the one the request was sent to. This stops a web page you visit from triggering checks or actions on a Grimoire that only your network can reach.
 
 Requests without these headers, such as `curl` or a script, are not affected, so API automation keeps working. If a reverse proxy rewrites the `Host` header, browsers that do not send `Sec-Fetch-Site` are rejected: make the proxy pass the original `Host` (see [Deploy Grimoire](../how-to/deploy.md#reverse-proxy)).
+
+## Backlog
+
+| Method | Path | Description |
+|--------|------|-------------|
+| `GET` | `/api/backlog/export` | The backlog as Markdown, grouped by priority tier |
+
+The response has the content type `text/markdown`. All parameters are optional:
+
+| Parameter | Description |
+|-----------|-------------|
+| `categories` | Comma-separated problem categories to keep, for example `failing_workflow,stale_pr` |
+| `repos` | Comma-separated repository full names to keep |
+| `min_score` | Only items with at least this score |
+| `spaces` | Comma-separated space ids; see [Filtering by space](#filtering-by-space). The backlog page passes its own selection here, so its export matches what the page shows |
 
 ## Health
 
