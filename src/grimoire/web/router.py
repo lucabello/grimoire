@@ -33,7 +33,7 @@ from grimoire.prs import (
     search_results,
     sort_pull_requests,
 )
-from grimoire.spaces import ALL_SPACES, SpaceSelection
+from grimoire.spaces import ALL_SPACES, SpaceSelection, api_space_selection
 from grimoire.targeting import TargetSpec
 from grimoire.web.backlog import (
     BacklogItem,
@@ -1559,8 +1559,9 @@ async def _build_backlog_items(
     min_score: float = 0.0,
     config_override: BacklogConfig | None = None,
     search: str = "",
+    selection: SpaceSelection = ALL_SPACES,
 ) -> list[BacklogItem]:
-    """Collect and optionally filter backlog items."""
+    """Collect and optionally filter backlog items of the repos in the space selection."""
     from grimoire.github.router import _cache, _repos
 
     check_targets, results_by_key = await _load_check_context(_repos)
@@ -1577,6 +1578,7 @@ async def _build_backlog_items(
         check_targets=check_targets,
         results_by_key=results_by_key,
         check_defs=_checks,
+        selection=selection,
     )
 
     # Apply filters
@@ -1606,11 +1608,13 @@ async def _build_backlog_items(
 
 
 @router.get("/backlog", response_class=HTMLResponse)
-async def backlog_page(request: Request) -> HTMLResponse:
-    """Backlog page — prioritised problem list across all repos."""
+async def backlog_page(
+    request: Request, selection: SpaceSelection = Depends(html_space_selection)
+) -> HTMLResponse:
+    """Backlog page — prioritised problem list across the repos of the space selection."""
     from grimoire.github.router import _last_refresh
 
-    items = await _build_backlog_items()
+    items = await _build_backlog_items(selection=selection)
 
     # Build summary counts per tier
     tier_counts: dict[str, int] = {}
@@ -1643,6 +1647,8 @@ async def backlog_page(request: Request) -> HTMLResponse:
             "backlog_config": _backlog_config,
             "time_ago": _time_ago,
             "last_refresh": _last_refresh,
+            # Explicit ?spaces= for the export URL, so the export matches what the page shows
+            "export_spaces": ",".join(sorted(selection.ids or ())),
         },
     )
 
@@ -1660,6 +1666,7 @@ async def backlog_items_partial(
     w_failing_check_warning: float = -1,
     w_stale_pr: float = -1,
     w_stale_issue: float = -1,
+    selection: SpaceSelection = Depends(html_space_selection),
 ) -> HTMLResponse:
     """Return filtered backlog items as an HTMX partial."""
     cat_list = [c for c in categories.split(",") if c] or None
@@ -1690,6 +1697,7 @@ async def backlog_items_partial(
         min_score=min_score,
         config_override=config_override,
         search=search,
+        selection=selection,
     )
 
     groups = None
@@ -1717,8 +1725,13 @@ async def backlog_export_markdown(
     categories: str = "",
     repos: str = "",
     min_score: float = 0.0,
+    selection: SpaceSelection = Depends(api_space_selection),
 ) -> PlainTextResponse:
-    """Export the backlog as Markdown text."""
+    """Export the backlog as Markdown text.
+
+    Like the JSON API it reads the space selection from ``?spaces=`` only (never the cookie);
+    the backlog page passes its own selection explicitly.
+    """
     cat_list = [c for c in categories.split(",") if c] or None
     repo_list = [r for r in repos.split(",") if r] or None
 
@@ -1726,6 +1739,7 @@ async def backlog_export_markdown(
         categories=cat_list,
         repos_filter=repo_list,
         min_score=min_score,
+        selection=selection,
     )
     md = export_markdown(items)
     return PlainTextResponse(md, media_type="text/markdown")

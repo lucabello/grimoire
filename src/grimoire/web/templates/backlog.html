@@ -2,6 +2,8 @@
 {% block title %}Backlog — Grimoire{% endblock %}
 {% block nav_backlog %}active{% endblock %}
 {% block content %}
+{# Export URLs carry the page's space selection explicitly; the API never reads the cookie #}
+{% set export_qs = ('?spaces=' ~ (export_spaces | urlencode)) if export_spaces else '' %}
 
 {# ── Header ────────────────────────────────────────────────────────── #}
 <div class="flex flex-col gap-1 mb-6">
@@ -41,7 +43,7 @@
                 </label>
                 <ul tabindex="0" class="dropdown-content z-[1] menu p-2 shadow bg-base-100 rounded-box w-56">
                     <li><a id="export-md" href="#">Copy as Markdown</a></li>
-                    <li><a id="export-download" href="{{ base_path }}/api/backlog/export" target="_blank">Download .md file</a></li>
+                    <li><a id="export-download" href="{{ base_path }}/api/backlog/export{{ export_qs }}" target="_blank">Download .md file</a></li>
                 </ul>
             </div>
             <button class="btn btn-sm btn-ghost" onclick="document.getElementById('filters-panel').classList.toggle('hidden')">
@@ -324,7 +326,7 @@
     document.getElementById('export-md').addEventListener('click', async function(e) {
         e.preventDefault();
         try {
-            const resp = await fetch(BASE_PATH + '/api/backlog/export');
+            const resp = await fetch(BASE_PATH + '/api/backlog/export' + {{ export_qs | tojson }});
             const text = await resp.text();
             await navigator.clipboard.writeText(text);
             showToast('Backlog copied to clipboard', 'success');

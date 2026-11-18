@@ -458,8 +458,14 @@ Individual items can be copied via the per-row clipboard button.
 |----------|--------|---------|
 | `GET /backlog` | GET | Full page. Accepts `?group_by=repo` or `?group_by=type` for grouped views. |
 | `GET /partials/backlog-items` | GET | HTMX partial (item list). Accepts query params: `category`, `repo`, `group_by` (`repo` or `type`), `search`, weight overrides. |
-| `GET /api/backlog/export` | GET | Full backlog as Markdown text |
+| `GET /api/backlog/export` | GET | Full backlog as Markdown text. Accepts `?categories=`, `?repos=`, `?min_score=` and `?spaces=` (query only, never the cookie) |
 | `POST /api/backlog/save-weights` | POST | Persists category weight changes to `config.yaml` and reloads in-memory config |
+
+### Space filter
+
+`build_backlog_items(..., selection)` only collects items of repos with `selection.includes(repo)`; failing-workflow items additionally require `selection.workflow_visible(repo, workflow_name)`. Scoring, weights and ranking are unaffected: the selection only changes which items exist. Each `BacklogItem` carries `spaces` (the repo's space ids) and the rows and repo-group headers show `space_badges` when spaces are configured.
+
+`GET /backlog` and `GET /partials/backlog-items` use the HTML selection (6.12). The export is called from the page JavaScript and must export what the page shows, but `/api/backlog/export` is an API endpoint that reads `?spaces=` only: the page therefore adds `?spaces=<ids>` (empty for All, so no parameter) to the "Copy as Markdown" request and to the "Download .md file" link, which keeps the export URL reproducible. `POST /api/backlog/save-weights` is unchanged (it rewrites the main config file; `space_files` are never touched).
 
 ### Item Sources
 
@@ -640,6 +646,7 @@ HTML pages and HTMX partials filter by the user's space selection; the JSON API 
 - [ ] Backlog export renders correct Markdown with tier grouping
 - [ ] Backlog per-item copy-to-clipboard works
 - [ ] Backlog filters by category and repo work correctly
+- [ ] The backlog page, partial and export only list items of the selected spaces' repos (and only the workflows the selected spaces allow); scores are unchanged; the export honours `?spaces=` and ignores the cookie
 - [ ] A group with `authors: ["app/renovate", "app/dependabot", "observability-noctua-bot"]` matches the PRs of `renovate[bot]`, `dependabot[bot]` and `observability-noctua-bot` and no others
 - [ ] PRs page shows one section per group with CI badge, repository, linked title, labels, draft and auto-merge badges, author, review/merge badges, age and last update; chips, search, `ci` filter, sort and group selection work through HTMX; all empty states render
 - [ ] `GET /api/prs` returns the groups with their PRs without GitHub calls; `/maintenance` and `/api/maintenance/groups` are gone
