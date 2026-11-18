@@ -7,7 +7,6 @@ import json
 import logging
 from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
-from fnmatch import fnmatch
 from pathlib import Path
 from typing import Any, overload
 
@@ -18,6 +17,7 @@ from sqlmodel.ext.asyncio.session import AsyncSession
 from grimoire.config import (
     GrimoireConfig,
     PRGroup,
+    RepoSource,
     StalenessConfig,
     StaticRepoSource,
     TeamRepoSource,
@@ -35,6 +35,7 @@ from grimoire.models import (
     IssueDetail,
     OpenPullRequest,
     PullRequestDetail,
+    RepoMembership,
     RepositoryStats,
     TrackedRepository,
     WorkflowStatus,
@@ -91,20 +92,6 @@ def get_refresh_progress() -> RefreshProgress | None:
     return _refresh_progress
 
 
-def _workflow_matches_filter(wf_name: str, include: list[str], exclude: list[str]) -> bool:
-    """Return True if the workflow should be tracked after applying filters.
-
-    * If *include* is non-empty, the name must match at least one include pattern.
-    * If *exclude* is non-empty, the name must NOT match any exclude pattern.
-    * Both use ``fnmatch`` glob matching (case-sensitive).
-    """
-    if include and not any(fnmatch(wf_name, pat) for pat in include):
-        return False
-    if exclude and any(fnmatch(wf_name, pat) for pat in exclude):
-        return False
-    return True
-
-
 # ---------------------------------------------------------------------------
 # resolve_repositories
 # ---------------------------------------------------------------------------
@@ -113,22 +100,59 @@ def _workflow_matches_filter(wf_name: str, include: list[str], exclude: list[str
 async def resolve_repositories(
     config: GrimoireConfig, client: GitHubClient
 ) -> list[TrackedRepository]:
-    """Build the list of tracked repos from config, validating via the API."""
+    """Build the list of tracked repos from config, validating via the API.
+
+    Top-level sources are resolved first (membership ``space=None``), then the sources of each
+    space. A repo reachable through several sources is returned once, with the union of their
+    branches and one membership per source.
+    """
     seen: dict[str, TrackedRepository] = {}
 
-    for source in config.repositories:
-        if isinstance(source, StaticRepoSource):
-            await _resolve_static(source, client, seen)
-        elif isinstance(source, TeamRepoSource):
-            await _resolve_team(source, client, seen)
+    scopes: list[tuple[str | None, list[RepoSource]]] = [(None, config.repositories)]
+    scopes.extend((space.id, space.repositories) for space in config.spaces)
+
+    for space, sources in scopes:
+        for source in sources:
+            if isinstance(source, StaticRepoSource):
+                await _resolve_static(source, client, seen, space)
+            elif isinstance(source, TeamRepoSource):
+                await _resolve_team(source, client, seen, space)
 
     return list(seen.values())
+
+
+def _track(
+    seen: dict[str, TrackedRepository],
+    full_name: str,
+    default_branch: str,
+    branches: list[str],
+    source_label: str,
+    membership: RepoMembership,
+) -> None:
+    """Record that *membership*'s source yields *full_name*, merging with earlier sources."""
+    existing = seen.get(full_name)
+    if existing is None:
+        seen[full_name] = TrackedRepository(
+            full_name=full_name,
+            default_branch=default_branch,
+            branches=branches,
+            source=source_label,
+            memberships=[membership],
+        )
+    else:
+        seen[full_name] = existing.model_copy(
+            update={
+                "branches": list(dict.fromkeys(existing.branches + branches)),
+                "memberships": [*existing.memberships, membership],
+            }
+        )
 
 
 async def _resolve_static(
     source: StaticRepoSource,
     client: GitHubClient,
     seen: dict[str, TrackedRepository],
+    space: str | None = None,
 ) -> None:
     try:
         data = await client.get_repo(source.repo)
@@ -145,20 +169,18 @@ async def _resolve_static(
             return
 
         branches = source.branches if source.branches else [default_branch]
-
-        if source.repo in seen:
-            existing = seen[source.repo]
-            merged = list(dict.fromkeys(existing.branches + branches))
-            seen[source.repo] = existing.model_copy(update={"branches": merged})
-        else:
-            seen[source.repo] = TrackedRepository(
-                full_name=source.repo,
-                default_branch=default_branch,
-                branches=branches,
-                source="static",
+        _track(
+            seen,
+            source.repo,
+            default_branch,
+            branches,
+            "static",
+            RepoMembership(
+                space=space,
                 workflow_include=source.workflows.include,
                 workflow_exclude=source.workflows.exclude,
-            )
+            ),
+        )
     except Exception:
         logger.warning("Failed to resolve static repo %s, skipping", source.repo, exc_info=True)
 
@@ -167,6 +189,7 @@ async def _resolve_team(
     source: TeamRepoSource,
     client: GitHubClient,
     seen: dict[str, TrackedRepository],
+    space: str | None = None,
 ) -> None:
     # team format: "org/team-slug"
     try:
@@ -191,22 +214,18 @@ async def _resolve_team(
             continue
 
         default_branch = repo_data.get("default_branch", "main")
-        branches = [default_branch]
-        source_label = f"team:{source.team}"
-
-        if full_name in seen:
-            existing = seen[full_name]
-            merged = list(dict.fromkeys(existing.branches + branches))
-            seen[full_name] = existing.model_copy(update={"branches": merged})
-        else:
-            seen[full_name] = TrackedRepository(
-                full_name=full_name,
-                default_branch=default_branch,
-                branches=branches,
-                source=source_label,
+        _track(
+            seen,
+            full_name,
+            default_branch,
+            [default_branch],
+            f"team:{source.team}",
+            RepoMembership(
+                space=space,
                 workflow_include=source.workflows.include,
                 workflow_exclude=source.workflows.exclude,
-            )
+            ),
+        )
 
 
 # ---------------------------------------------------------------------------
@@ -328,9 +347,7 @@ async def fetch_repository_stats(
                     wf_name = wf.get("name", "unknown")
                     if wf_id is None:
                         continue
-                    if not _workflow_matches_filter(
-                        wf_name, repo.workflow_include, repo.workflow_exclude
-                    ):
+                    if not repo.allows_workflow(wf_name):
                         continue
                     try:
                         runs = await client.get_workflow_runs(repo.full_name, wf_id, branch)
@@ -738,8 +755,7 @@ async def save_stats_to_db(
                     stale_pull_requests=stats.stale_pull_requests,
                     last_commit_at=stats.last_commit_at,
                     total_branches=stats.total_branches,
-                    workflow_include_json=json.dumps(repo.workflow_include),
-                    workflow_exclude_json=json.dumps(repo.workflow_exclude),
+                    memberships_json=json.dumps([m.model_dump() for m in repo.memberships]),
                     fetched_at=stats.fetched_at or now,
                 )
             )
@@ -841,12 +857,7 @@ async def load_stats_from_db(
                 default_branch=cr.default_branch,
                 branches=branches,
                 source=cr.source,
-                workflow_include=json.loads(cr.workflow_include_json)
-                if cr.workflow_include_json
-                else [],
-                workflow_exclude=json.loads(cr.workflow_exclude_json)
-                if cr.workflow_exclude_json
-                else [],
+                memberships=[RepoMembership(**m) for m in json.loads(cr.memberships_json)],
             )
             repos.append(repo)
 
@@ -973,15 +984,15 @@ async def prune_removed_repos(engine: AsyncEngine, config: GrimoireConfig) -> in
     sources (``repo:`` entries) so the full set of expected names is known
     without making API calls.  Returns the number of repos pruned.
     """
-    has_team_sources = any(isinstance(s, TeamRepoSource) for s in config.repositories)
-    if has_team_sources:
+    sources: list[RepoSource] = list(config.repositories)
+    for space in config.spaces:
+        sources.extend(space.repositories)
+
+    if any(isinstance(s, TeamRepoSource) for s in sources):
         logger.debug("Config contains team sources — skipping DB prune")
         return 0
 
-    configured_names: set[str] = set()
-    for source in config.repositories:
-        if isinstance(source, StaticRepoSource):
-            configured_names.add(source.repo)
+    configured_names = {s.repo for s in sources if isinstance(s, StaticRepoSource)}
 
     if not configured_names:
         return 0
@@ -1010,7 +1021,7 @@ async def prune_stale_data(
     # workflow statuses that no longer pass the include/exclude filter.
     async with AsyncSession(engine) as session:
         for repo in repos:
-            if not repo.workflow_include and not repo.workflow_exclude:
+            if all(not m.workflow_include and not m.workflow_exclude for m in repo.memberships):
                 continue
             wf_rows = (
                 await session.exec(
@@ -1020,9 +1031,7 @@ async def prune_stale_data(
                 )
             ).all()
             for wf in wf_rows:
-                if not _workflow_matches_filter(
-                    wf.workflow_name, repo.workflow_include, repo.workflow_exclude
-                ):
+                if not repo.allows_workflow(wf.workflow_name):
                     await session.delete(wf)
         await session.commit()
 

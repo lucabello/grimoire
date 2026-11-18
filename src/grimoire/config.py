@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import glob
 import os
 import re
 from pathlib import Path
@@ -9,7 +10,15 @@ from typing import Annotated, Literal, Union
 
 import yaml
 from dataconfy import ConfigManager, DataManager
-from pydantic import BaseModel, Field, ValidationInfo, field_validator, model_validator
+from pydantic import (
+    BaseModel,
+    ConfigDict,
+    Field,
+    ValidationError,
+    ValidationInfo,
+    field_validator,
+    model_validator,
+)
 from typing_extensions import Self
 
 _ENV_VAR_PATTERN = re.compile(r"^\$\{([^}]+)\}$")
@@ -106,6 +115,26 @@ class TeamRepoSource(BaseModel):
 
 
 RepoSource = Annotated[Union[StaticRepoSource, TeamRepoSource], Field(discriminator=None)]
+
+
+class SpaceConfig(BaseModel):
+    """A named slice of the tracked repositories that teams can filter the UI by."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    # Ids may not start with "_": that prefix is reserved for pseudo-spaces (_unassigned).
+    id: str = Field(pattern=r"^[a-z0-9][a-z0-9-]*$")
+    name: str
+    color: str | None = Field(default=None, pattern=r"^#[0-9a-fA-F]{6}$")
+    description: str = ""
+    repositories: list[RepoSource] = Field(min_length=1)
+
+    @field_validator("repositories", mode="before")
+    @classmethod
+    def parse_repo_sources(cls, value: object) -> object:
+        if isinstance(value, list):
+            return [_parse_repo_source(v) if isinstance(v, dict) else v for v in value]
+        return value
 
 
 class StalenessConfig(BaseModel):
@@ -290,7 +319,11 @@ class GrimoireConfig(BaseModel):
     github: GitHubConfig
     git: GitConfig | None = None
 
-    repositories: list[RepoSource]
+    repositories: list[RepoSource] = Field(default_factory=list)
+    spaces: list[SpaceConfig] = Field(default_factory=list)
+    # Globs (relative to the main config file's directory) of files holding one space each.
+    # load_config expands them and appends the result to ``spaces``.
+    space_files: list[str] = Field(default_factory=list)
 
     staleness: StalenessConfig = Field(default_factory=StalenessConfig)
     backlog: BacklogConfig = Field(default_factory=BacklogConfig)
@@ -305,8 +338,16 @@ class GrimoireConfig(BaseModel):
 
     @model_validator(mode="after")
     def at_least_one_repo_source(self) -> Self:
-        if not self.repositories:
+        if not self.repositories and not self.spaces:
             raise ValueError("At least one repository source must be configured")
+        return self
+
+    @model_validator(mode="after")
+    def unique_space_ids(self) -> Self:
+        ids = [space.id for space in self.spaces]
+        duplicates = sorted({space_id for space_id in ids if ids.count(space_id) > 1})
+        if duplicates:
+            raise ValueError(f"Duplicate space ids: {', '.join(duplicates)}")
         return self
 
 
@@ -364,4 +405,61 @@ def load_config(path: Path | None = None) -> GrimoireConfig:
     parsed_repos = [_parse_repo_source(r) for r in raw_repos]
     resolved["repositories"] = parsed_repos
 
+    resolved["spaces"] = _merge_spaces(resolved, base_dir=path.parent)
+
     return GrimoireConfig.model_validate(resolved)
+
+
+def _load_space_files(patterns: object, base_dir: Path) -> list[tuple[Path, SpaceConfig]]:
+    """Expand ``space_files`` globs and load the single space each matching file holds."""
+    if not isinstance(patterns, list) or not all(isinstance(p, str) for p in patterns):
+        raise ValueError("space_files must be a list of glob patterns")
+
+    seen: set[Path] = set()
+    loaded: list[tuple[Path, SpaceConfig]] = []
+    for pattern in patterns:
+        for match in sorted(glob.glob(pattern, root_dir=base_dir, recursive=True)):
+            file_path = (base_dir / match).resolve()
+            if file_path in seen or not file_path.is_file():
+                continue
+            seen.add(file_path)
+
+            with open(file_path) as f:
+                raw = yaml.safe_load(f)
+            if not isinstance(raw, dict):
+                raise ValueError(
+                    f"Space file {file_path} must hold a YAML mapping for one space, "
+                    f"got {type(raw).__name__}"
+                )
+            try:
+                space = SpaceConfig.model_validate(resolve_env_vars(raw))
+            except ValidationError as exc:
+                raise ValueError(f"Invalid space file {file_path}: {exc}") from exc
+            loaded.append((file_path, space))
+    return loaded
+
+
+def _merge_spaces(resolved: dict, base_dir: Path) -> list:  # type: ignore[type-arg]
+    """Append the spaces from ``space_files`` to the inline ones; ids must be unique."""
+    inline = resolved.get("spaces") or []
+    if not isinstance(inline, list):
+        raise ValueError("spaces must be a list")
+
+    origins: dict[str, str] = {}
+    for entry in inline:
+        if isinstance(entry, dict) and isinstance(entry.get("id"), str):
+            space_id = entry["id"]
+            if space_id in origins:
+                raise ValueError(f"Duplicate space id '{space_id}': defined twice inline")
+            origins[space_id] = "inline"
+
+    spaces: list = list(inline)  # type: ignore[type-arg]
+    for file_path, space in _load_space_files(resolved.get("space_files", []), base_dir):
+        if space.id in origins:
+            raise ValueError(
+                f"Duplicate space id '{space.id}': defined in {origins[space.id]} "
+                f"and in {file_path}"
+            )
+        origins[space.id] = str(file_path)
+        spaces.append(space)
+    return spaces

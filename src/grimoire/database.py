@@ -126,8 +126,7 @@ class CachedRepository(SQLModel, table=True):
     stale_pull_requests: int = 0
     last_commit_at: Optional[datetime] = None
     total_branches: int = 0
-    workflow_include_json: str = "[]"  # JSON-encoded glob patterns
-    workflow_exclude_json: str = "[]"  # JSON-encoded glob patterns
+    memberships_json: str = "[]"  # JSON-encoded RepoMembership list (space + workflow filters)
     fetched_at: datetime = Field(default_factory=_utcnow)
 
 

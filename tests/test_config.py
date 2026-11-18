@@ -9,6 +9,7 @@ import pytest
 
 from grimoire.config import (
     GrimoireConfig,
+    SpaceConfig,
     StaticRepoSource,
     TeamRepoSource,
     _get_xdg_config_path,
@@ -285,37 +286,276 @@ class TestLoadConfig:
         assert repo.workflows.exclude == []
 
 
+class TestSpaces:
+    """Tests for ``spaces:`` and ``space_files:``."""
+
+    @staticmethod
+    def _write(path: Path, content: str) -> Path:
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(textwrap.dedent(content))
+        return path
+
+    def _main(self, directory: Path, extra: str = "") -> Path:
+        return self._write(
+            directory / "config.yaml",
+            'github:\n  token: "t"\n' + textwrap.dedent(extra),
+        )
+
+    def test_without_spaces_loads_unchanged(self, tmp_config: Path) -> None:
+        config = load_config(tmp_config)
+        assert config.spaces == []
+        assert config.space_files == []
+
+    def test_inline_spaces(self, tmp_path: Path) -> None:
+        main = self._main(
+            tmp_path,
+            """\
+            repositories:
+              - repo: "owner/shared"
+            spaces:
+              - id: platform
+                name: Platform
+                color: "#3366ff"
+                description: Platform team
+                repositories:
+                  - repo: "owner/api"
+                    branches: ["main"]
+                  - team: "org/platform"
+                    exclude: ["org/old"]
+            """,
+        )
+        config = load_config(main)
+        assert [s.id for s in config.spaces] == ["platform"]
+        space = config.spaces[0]
+        assert (space.name, space.color, space.description) == (
+            "Platform",
+            "#3366ff",
+            "Platform team",
+        )
+        assert isinstance(space.repositories[0], StaticRepoSource)
+        assert space.repositories[0].branches == ["main"]
+        assert isinstance(space.repositories[1], TeamRepoSource)
+        assert space.repositories[1].exclude == ["org/old"]
+
+    def test_space_defaults(self, tmp_path: Path) -> None:
+        main = self._main(
+            tmp_path,
+            """\
+            spaces:
+              - {id: a, name: A, repositories: [{repo: "o/r"}]}
+            """,
+        )
+        space = load_config(main).spaces[0]
+        assert space.color is None
+        assert space.description == ""
+
+    def test_space_files_only(self, tmp_path: Path) -> None:
+        main = self._main(tmp_path, 'space_files: ["spaces.d/*.yaml"]\n')
+        self._write(
+            tmp_path / "spaces.d" / "b.yaml",
+            'id: b\nname: B\nrepositories:\n  - repo: "o/b"\n',
+        )
+        self._write(
+            tmp_path / "spaces.d" / "a.yaml",
+            'id: a\nname: A\nrepositories:\n  - repo: "o/a"\n',
+        )
+        config = load_config(main)
+        assert [s.id for s in config.spaces] == ["a", "b"]
+        assert config.space_files == ["spaces.d/*.yaml"]
+
+    def test_inline_then_files_appended(self, tmp_path: Path) -> None:
+        main = self._main(
+            tmp_path,
+            """\
+            repositories:
+              - repo: "o/top"
+            spaces:
+              - {id: inline, name: Inline, repositories: [{repo: "o/i"}]}
+            space_files: ["spaces.d/*.yaml"]
+            """,
+        )
+        self._write(
+            tmp_path / "spaces.d" / "f.yaml",
+            'id: filed\nname: Filed\nrepositories:\n  - repo: "o/f"\n',
+        )
+        assert [s.id for s in load_config(main).spaces] == ["inline", "filed"]
+
+    def test_glob_relative_to_config_directory_not_cwd(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        config_dir = tmp_path / "etc"
+        main = self._main(config_dir, 'space_files: ["spaces.d/*.yaml"]\n')
+        self._write(
+            config_dir / "spaces.d" / "a.yaml",
+            'id: a\nname: A\nrepositories:\n  - repo: "o/a"\n',
+        )
+        elsewhere = tmp_path / "elsewhere"
+        elsewhere.mkdir()
+        monkeypatch.chdir(elsewhere)
+        assert [s.id for s in load_config(main).spaces] == ["a"]
+
+    def test_overlapping_globs_load_a_file_once(self, tmp_path: Path) -> None:
+        main = self._main(tmp_path, 'space_files: ["spaces.d/*.yaml", "spaces.d/a.*"]\n')
+        self._write(
+            tmp_path / "spaces.d" / "a.yaml",
+            'id: a\nname: A\nrepositories:\n  - repo: "o/a"\n',
+        )
+        assert [s.id for s in load_config(main).spaces] == ["a"]
+
+    def test_env_var_in_space_file(self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+        monkeypatch.setenv("SPACE_REPO", "owner/from-env")
+        main = self._main(tmp_path, 'space_files: ["s.yaml"]\n')
+        self._write(
+            tmp_path / "s.yaml",
+            'id: a\nname: A\nrepositories:\n  - repo: "${SPACE_REPO}"\n',
+        )
+        source = load_config(main).spaces[0].repositories[0]
+        assert isinstance(source, StaticRepoSource)
+        assert source.repo == "owner/from-env"
+
+    def test_unmatched_glob_is_not_an_error(self, tmp_path: Path) -> None:
+        main = self._main(
+            tmp_path,
+            """\
+            repositories:
+              - repo: "o/r"
+            space_files: ["spaces.d/*.yaml"]
+            """,
+        )
+        assert load_config(main).spaces == []
+
+    def test_spaces_without_top_level_repositories_is_valid(self, tmp_path: Path) -> None:
+        main = self._main(
+            tmp_path,
+            """\
+            spaces:
+              - {id: a, name: A, repositories: [{repo: "o/r"}]}
+            """,
+        )
+        assert load_config(main).repositories == []
+
+    def test_empty_space_files_only_config_is_rejected(self, tmp_path: Path) -> None:
+        main = self._main(tmp_path, 'space_files: ["nothing/*.yaml"]\n')
+        with pytest.raises(Exception, match="[Aa]t least one"):
+            load_config(main)
+
+    def test_duplicate_id_inline_and_file_names_both_origins(self, tmp_path: Path) -> None:
+        main = self._main(
+            tmp_path,
+            """\
+            spaces:
+              - {id: a, name: A, repositories: [{repo: "o/r"}]}
+            space_files: ["a.yaml"]
+            """,
+        )
+        self._write(tmp_path / "a.yaml", 'id: a\nname: A2\nrepositories:\n  - repo: "o/x"\n')
+        with pytest.raises(ValueError, match=r"Duplicate space id 'a'.*inline.*a\.yaml"):
+            load_config(main)
+
+    def test_duplicate_id_across_files_names_both_files(self, tmp_path: Path) -> None:
+        main = self._main(tmp_path, 'space_files: ["*.space.yaml"]\n')
+        for name in ("one", "two"):
+            self._write(
+                tmp_path / f"{name}.space.yaml",
+                'id: dup\nname: D\nrepositories:\n  - repo: "o/x"\n',
+            )
+        with pytest.raises(ValueError, match=r"one\.space\.yaml.*two\.space\.yaml"):
+            load_config(main)
+
+    def test_duplicate_id_inline_twice(self, tmp_path: Path) -> None:
+        main = self._main(
+            tmp_path,
+            """\
+            spaces:
+              - {id: a, name: A, repositories: [{repo: "o/r"}]}
+              - {id: a, name: A2, repositories: [{repo: "o/s"}]}
+            """,
+        )
+        with pytest.raises(ValueError, match="Duplicate space id 'a'"):
+            load_config(main)
+
+    @pytest.mark.parametrize("bad_id", ["_unassigned", "Upper", "-lead", "has space", ""])
+    def test_invalid_space_id(self, bad_id: str) -> None:
+        with pytest.raises(ValueError):
+            SpaceConfig(id=bad_id, name="X", repositories=[StaticRepoSource(repo="o/r")])
+
+    def test_invalid_color(self) -> None:
+        with pytest.raises(ValueError):
+            SpaceConfig(
+                id="a", name="A", color="blue", repositories=[StaticRepoSource(repo="o/r")]
+            )
+
+    def test_space_needs_repositories(self, tmp_path: Path) -> None:
+        main = self._main(
+            tmp_path,
+            """\
+            repositories:
+              - repo: "o/r"
+            spaces:
+              - {id: a, name: A, repositories: []}
+            """,
+        )
+        with pytest.raises(ValueError):
+            load_config(main)
+
+    def test_unknown_key_in_space_file(self, tmp_path: Path) -> None:
+        main = self._main(tmp_path, 'space_files: ["s.yaml"]\n')
+        self._write(
+            tmp_path / "s.yaml",
+            'id: a\nname: A\nstaleness: {issues_days: 1}\nrepositories:\n  - repo: "o/r"\n',
+        )
+        with pytest.raises(ValueError, match=r"(?s)s\.yaml.*staleness"):
+            load_config(main)
+
+    def test_unknown_key_in_inline_space(self, tmp_path: Path) -> None:
+        main = self._main(
+            tmp_path,
+            """\
+            spaces:
+              - {id: a, name: A, extra: 1, repositories: [{repo: "o/r"}]}
+            """,
+        )
+        with pytest.raises(ValueError, match="extra"):
+            load_config(main)
+
+    def test_non_mapping_space_file(self, tmp_path: Path) -> None:
+        main = self._main(tmp_path, 'space_files: ["s.yaml"]\n')
+        self._write(tmp_path / "s.yaml", "- id: a\n  name: A\n")
+        with pytest.raises(ValueError, match=r"s\.yaml.*mapping"):
+            load_config(main)
+
+
 class TestWorkflowMatchesFilter:
     """Tests for the workflow include/exclude filter logic."""
 
     def test_no_filters_allows_all(self) -> None:
-        from grimoire.github.service import _workflow_matches_filter
+        from grimoire.models import workflow_matches_filter
 
-        assert _workflow_matches_filter("CI", [], []) is True
-        assert _workflow_matches_filter("Publish", [], []) is True
+        assert workflow_matches_filter("CI", [], []) is True
+        assert workflow_matches_filter("Publish", [], []) is True
 
     def test_include_only(self) -> None:
-        from grimoire.github.service import _workflow_matches_filter
+        from grimoire.models import workflow_matches_filter
 
-        assert _workflow_matches_filter("CI", ["CI", "Tests *"], []) is True
-        assert _workflow_matches_filter("Tests nightly", ["CI", "Tests *"], []) is True
-        assert _workflow_matches_filter("Publish", ["CI", "Tests *"], []) is False
+        assert workflow_matches_filter("CI", ["CI", "Tests *"], []) is True
+        assert workflow_matches_filter("Tests nightly", ["CI", "Tests *"], []) is True
+        assert workflow_matches_filter("Publish", ["CI", "Tests *"], []) is False
 
     def test_exclude_only(self) -> None:
-        from grimoire.github.service import _workflow_matches_filter
+        from grimoire.models import workflow_matches_filter
 
-        assert _workflow_matches_filter("CI", [], ["Publish *"]) is True
-        assert _workflow_matches_filter("Publish release", [], ["Publish *"]) is False
+        assert workflow_matches_filter("CI", [], ["Publish *"]) is True
+        assert workflow_matches_filter("Publish release", [], ["Publish *"]) is False
 
     def test_include_and_exclude(self) -> None:
-        from grimoire.github.service import _workflow_matches_filter
+        from grimoire.models import workflow_matches_filter
 
         # "Tests CI" matches include, doesn't match exclude → allowed
-        assert _workflow_matches_filter("Tests CI", ["Tests *"], ["Tests nightly"]) is True
+        assert workflow_matches_filter("Tests CI", ["Tests *"], ["Tests nightly"]) is True
         # "Tests nightly" matches include AND exclude → excluded
-        assert _workflow_matches_filter("Tests nightly", ["Tests *"], ["Tests nightly"]) is False
+        assert workflow_matches_filter("Tests nightly", ["Tests *"], ["Tests nightly"]) is False
         # "Publish" doesn't match include → excluded
-        assert _workflow_matches_filter("Publish", ["Tests *"], ["Publish"]) is False
+        assert workflow_matches_filter("Publish", ["Tests *"], ["Publish"]) is False
 
 
 class TestConfigPathResolution:

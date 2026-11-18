@@ -61,7 +61,7 @@ git:  # entire section is optional (only needed if actions commit/push)
     format: "ssh"             # "ssh" | "gpg"
   ssh_known_hosts: "/keys/known_hosts"  # optional
 
-repositories:
+repositories:                   # optional when `spaces`/`space_files` provide at least one source
   # Static list with optional branches
   - repo: "lucabello/grimoire"
     branches: ["main", "develop"]
@@ -81,6 +81,21 @@ repositories:
       - "my-org/deprecated-repo"
     workflows:
       exclude: ["Nightly *"]      # applies to all repos from this team
+
+# Spaces — optional named slices of the tracked repositories. A navbar selector filters every page
+# by space; spaces are a view filter, not a security boundary. Each entry holds only space fields.
+spaces:
+  - id: platform                # ^[a-z0-9][a-z0-9-]*$ (ids starting with "_" are reserved, e.g. _unassigned)
+    name: "Platform"
+    color: "#3366ff"            # optional "#rrggbb"
+    description: "Platform team" # optional, default ""
+    repositories:               # non-empty; same sources as top-level `repositories`
+      - repo: "lucabello/grimoire"
+      - team: "my-org/platform"
+
+# Globs relative to the directory of this config file. Each matching file (sorted per glob) holds
+# exactly one space mapping with the same schema as an inline entry; ${ENV_VAR} is resolved.
+space_files: ["spaces.d/*.yaml"]
 
 backlog:                        # optional — backlog scoring weights
   category_weights:
@@ -141,6 +156,7 @@ log_file: "./grimoire.log"
 - `TeamRepoSource(team: str, exclude: list[str] = [], workflows: WorkflowFilter = WorkflowFilter())`
 - `WorkflowFilter(include: list[str] = [], exclude: list[str] = [])` — glob patterns (fnmatch) on workflow name
 - `RepoSource` — discriminated union of the above (by field presence)
+- `SpaceConfig(id: str, name: str, color: str | None = None, description: str = "", repositories: list[RepoSource])` — `extra="forbid"`; `id` matches `^[a-z0-9][a-z0-9-]*$` (so the reserved `_unassigned` can never collide); `color` matches `#rrggbb`; `repositories` is non-empty and parsed like the top-level list
 - `StalenessConfig(pull_requests_days: int = 30, issues_days: int = 365, problematic_stale_issues_pct: int = 20, problematic_stale_prs_pct: int = 20)`
 - `BacklogCategoryWeights(failing_workflow: float = 100, failing_check_error: float = 80, failing_check_warning: float = 30, stale_pr: float = 50, stale_issue: float = 20)`
 - `RepositoryWeightRule(regex: str | None = None, repos: list[str] | None = None, weight: float = 1.0)` — exactly one of `regex` or `repos` must be set; rules are evaluated top-to-bottom and the last match wins
@@ -149,7 +165,7 @@ log_file: "./grimoire.log"
 - `DashboardConfig(workflow_groups: list[WorkflowGroup] = [], show_other: bool = True)` — group names must be unique and, when `show_other` is true, must not be "Other"; with no groups, all workflows share one "Workflows" column
 - `PRGroup(name: str, authors: list[str] = [], labels: list[str] = [], title_words: list[str] = [], draft: bool | None = None, base: str | None = None, repos: list[str] = [])` — `name` must be non-blank (stripped); list entries and `base` must be non-blank; at least one of `authors`, `labels`, `title_words`, `draft`, `base` is required (`repos` alone is not a matcher); `repos` are case-sensitive globs (`fnmatchcase`) on the tracked repository full name. Matching semantics are in spec 6.11
 - `PRsConfig(groups: list[PRGroup] = [])` — group names must be unique
-- `GrimoireConfig` — top-level model; `git: GitConfig | None = None` (optional); `backlog: BacklogConfig = BacklogConfig()` (optional); `dashboard: DashboardConfig = DashboardConfig()` (optional); `prs: PRsConfig = PRsConfig()` (optional)
+- `GrimoireConfig` — top-level model; `repositories: list[RepoSource] = []`; `spaces: list[SpaceConfig] = []`; `space_files: list[str] = []`; at least one repository source must exist at top level or in a space; space ids must be unique; `git: GitConfig | None = None` (optional); `backlog: BacklogConfig = BacklogConfig()` (optional); `dashboard: DashboardConfig = DashboardConfig()` (optional); `prs: PRsConfig = PRsConfig()` (optional)
 
 ### Config loading
 
@@ -166,7 +182,12 @@ def load_config(path: Path | None = None) -> GrimoireConfig:
     1. Locate config file: explicit path → GRIMOIRE_CONFIG env var → ./config.yaml → ~/.config/grimoire/config.yaml
     2. Read and parse YAML.
     3. Resolve env var references in string values.
-    4. Validate with Pydantic → GrimoireConfig.
+    4. Expand `space_files` globs relative to the config file's directory (files sorted within
+       each glob, a file matched twice loads once, a glob matching nothing is fine). Each file must
+       be a YAML mapping for exactly one `SpaceConfig`; env vars are resolved like the main file.
+       Append the file spaces after the inline ones (append-only merge, no overrides).
+       A duplicate id raises `ValueError` naming both origins ("inline" or the file path).
+    5. Validate with Pydantic → GrimoireConfig (`config.spaces` = inline + file spaces).
     """
 ```
 
@@ -177,10 +198,17 @@ def load_config(path: Path | None = None) -> GrimoireConfig:
 Pydantic models for domain concepts (not DB models — those come in 1.4):
 
 ```python
+class RepoMembership(BaseModel):
+    space: str | None = None        # None = top-level `repositories:` source
+    workflow_include: list[str] = []
+    workflow_exclude: list[str] = []
+
 class TrackedRepository(BaseModel):
     full_name: str          # "owner/repo"
     branches: list[str]     # branches to observe; empty = default branch only
-    source: str             # "static" | "team:org/team-name"
+    source: str             # "static" | "team:org/team-name" (first source that yielded it)
+    memberships: list[RepoMembership]  # one per configured source yielding the repo
+    # .spaces -> sorted non-None space ids; .allows_workflow(name) -> any membership allows it
 
 class WorkflowStatus(BaseModel):
     name: str
@@ -312,4 +340,5 @@ The schema is versioned with Alembic. The migrations live in the `src/grimoire/m
 - [ ] The migrated schema matches the SQLModel models (drift test)
 - [ ] `just dev` starts the server on port 8000, returns 200 on `GET /`
 - [ ] Tests cover config parsing (valid input, missing fields, invalid values)
+- [ ] A config without `spaces` loads unchanged; inline `spaces`, `space_files` or both load; duplicate ids (inline/file, file/file), invalid ids/colors, unknown keys and non-mapping space files fail with a clear message; empty top-level `repositories` is valid when a space has sources, and a config with no source anywhere is rejected
 - [ ] A config without `prs` loads with no groups; duplicate/blank group names, groups without a matcher and blank list entries fail validation with a clear message
