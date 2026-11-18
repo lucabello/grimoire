@@ -5,13 +5,14 @@ from __future__ import annotations
 from datetime import datetime
 from typing import TYPE_CHECKING
 
-from fastapi import APIRouter, BackgroundTasks, HTTPException
+from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException
 from pydantic import BaseModel
 from sqlmodel import select
 from sqlmodel.ext.asyncio.session import AsyncSession
 
 from grimoire.actions.engine import ActionConflictError, run_action
 from grimoire.database import ActionRunRecord, ActionRunRepoRecord, ActionToggleRecord
+from grimoire.spaces import SpaceSelection, api_space_selection
 
 if TYPE_CHECKING:
     from sqlalchemy.ext.asyncio import AsyncEngine
@@ -31,6 +32,7 @@ class ActionListItem(BaseModel):
     description: str
     schedule: str | None
     target_count: int
+    spaces: list[str] = []
 
 
 class ActionRunSummary(BaseModel):
@@ -102,12 +104,20 @@ router = APIRouter(prefix="/actions", tags=["actions"])
 
 
 @router.get("/", response_model=list[ActionListItem])
-async def list_actions() -> list[ActionListItem]:
-    """List all action definitions."""
+async def list_actions(
+    selection: SpaceSelection = Depends(api_space_selection),
+) -> list[ActionListItem]:
+    """List the action definitions.
+
+    ``?spaces=`` keeps the actions listed under those spaces plus the global ones (no
+    ``spaces``). Targeting is unaffected.
+    """
     import re
 
     items: list[ActionListItem] = []
     for a in _actions:
+        if not selection.lists(a.spaces):
+            continue
         count = 0
         if a.targets is None:
             count = 0
@@ -124,6 +134,7 @@ async def list_actions() -> list[ActionListItem]:
                 description=a.description,
                 schedule=a.schedule,
                 target_count=count,
+                spaces=a.spaces,
             )
         )
     return items

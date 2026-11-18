@@ -80,6 +80,24 @@ class SpaceSelection:
         spaces = repo.spaces
         return bool(self.ids.intersection(spaces)) or (UNASSIGNED in self.ids and not spaces)
 
+    def lists(self, definition_spaces: Iterable[str]) -> bool:
+        """True if a check/action with these ``spaces`` is listed under the selection.
+
+        Definitions without spaces are global and always listed; ``_unassigned`` alone therefore
+        lists only the global ones (it can never be a definition's space).
+        """
+        spaces = list(definition_spaces)
+        return not spaces or self.ids is None or bool(self.ids.intersection(spaces))
+
+    def repo_name_filter(self) -> Callable[[str], bool]:
+        """A predicate on repo full names, for rows that only carry the name (check results).
+
+        Repos that are no longer tracked are not part of a narrower selection.
+        """
+        if self.ids is None:
+            return lambda _name: True
+        return {repo.full_name for repo in _repos_provider() if self.includes(repo)}.__contains__
+
     def workflow_visible(self, repo: TrackedRepository, workflow_name: str) -> bool:
         """True if a selected space's membership of the repo allows the workflow.
 

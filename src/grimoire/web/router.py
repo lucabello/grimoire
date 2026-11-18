@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import re
+from collections.abc import Callable
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from fnmatch import fnmatchcase
@@ -17,6 +18,7 @@ from sqlalchemy import text
 from sqlmodel import select
 from sqlmodel.ext.asyncio.session import AsyncSession
 
+from grimoire.actions.engine import GLOBAL_REPO
 from grimoire.config import DashboardConfig, StalenessConfig
 from grimoire.database import ActionRunRecord
 from grimoire.models import TrackedRepository, WorkflowStatus
@@ -353,6 +355,12 @@ def _time_ago(dt: datetime | str) -> str:
         return f"{hours}h ago"
     days = hours // 24
     return f"{days}d ago"
+
+
+def _result_repo_filter(selection: SpaceSelection) -> Callable[[str], bool]:
+    """Predicate on the repo of a check/action result: in the selection, or a global action."""
+    in_selection = selection.repo_name_filter()
+    return lambda name: name == GLOBAL_REPO or in_selection(name)
 
 
 def _compute_totals(repos: list[RepoViewModel]) -> DashboardTotals:
@@ -705,12 +713,16 @@ async def repository_detail(request: Request, owner: str, name: str) -> HTMLResp
 
 
 @router.get("/actions", response_class=HTMLResponse)
-async def actions_page(request: Request) -> HTMLResponse:
-    """Actions page — list available actions with per-action results."""
+async def actions_page(
+    request: Request, selection: SpaceSelection = Depends(html_space_selection)
+) -> HTMLResponse:
+    """Actions page — the actions listed under the space selection, with per-action results."""
     from grimoire.actions.router import _actions
     from grimoire.actions.router import _engine as _actions_engine
 
-    # Build per-action aggregate stats from DB (latest run's repo results)
+    shown = _result_repo_filter(selection)
+
+    # Build per-action aggregate stats from DB (latest run's repo results of the shown repos)
     action_stats: dict[str, dict[str, Any]] = {}
     if _actions_engine is not None:
         async with AsyncSession(_actions_engine) as session:
@@ -718,7 +730,8 @@ async def actions_page(request: Request) -> HTMLResponse:
             run_rows = (
                 await session.execute(
                     text(
-                        "SELECT ar.id, ar.action_slug, ar.started_at, arrr.passed "
+                        "SELECT ar.id, ar.action_slug, ar.started_at, arrr.passed, "
+                        "arrr.repo_full_name "
                         "FROM action_run ar "
                         "JOIN action_run_repo arrr ON arrr.run_id = ar.id "
                         "WHERE ar.id IN ("
@@ -731,6 +744,8 @@ async def actions_page(request: Request) -> HTMLResponse:
             ).all()
 
             for row in run_rows:
+                if not shown(row[4]):
+                    continue
                 slug = row[1]
                 started_at = row[2]
                 passed = bool(row[3])
@@ -744,6 +759,8 @@ async def actions_page(request: Request) -> HTMLResponse:
 
     action_vms = []
     for a in _actions:
+        if not selection.lists(a.spaces):
+            continue
         targets = a.targets
         if targets is None:
             target_summary = "global"
@@ -781,18 +798,24 @@ async def actions_page(request: Request) -> HTMLResponse:
 
 
 @router.get("/checks", response_class=HTMLResponse)
-async def checks_page(request: Request) -> HTMLResponse:
-    """Checks page — list defined checks, toggle, run, view results."""
+async def checks_page(
+    request: Request, selection: SpaceSelection = Depends(html_space_selection)
+) -> HTMLResponse:
+    """Checks page — the checks listed under the space selection: toggle, run, view results."""
     from grimoire.checks.router import _checks
     from grimoire.checks.router import _engine as _checks_engine
 
-    # Build per-check aggregate stats from DB
+    shown = _result_repo_filter(selection)
+
+    # Build per-check aggregate stats from DB (results of the shown repos)
     check_stats: dict[str, dict[str, Any]] = {}
     if _checks_engine is not None and _checks:
         async with AsyncSession(_checks_engine) as session:
             result = await session.execute(_LATEST_RESULTS_SQL)
             rows = result.all()
         for row in rows:
+            if not shown(row[3]):
+                continue
             slug = row[2]
             passed = bool(row[5])
             ts = row[6]
@@ -806,6 +829,8 @@ async def checks_page(request: Request) -> HTMLResponse:
 
     check_vms = []
     for c in _checks:
+        if not selection.lists(c.spaces):
+            continue
         targets = c.targets
         if targets.regex is not None:
             target_summary = f"regex: {targets.regex}"
@@ -1007,8 +1032,10 @@ async def dashboard_stats_partial(
 
 
 @router.get("/partials/action-run/{run_id}", response_class=HTMLResponse)
-async def action_run_partial(request: Request, run_id: int) -> HTMLResponse:
-    """Return expanded action run details for inline expansion."""
+async def action_run_partial(
+    request: Request, run_id: int, selection: SpaceSelection = Depends(html_space_selection)
+) -> HTMLResponse:
+    """Return expanded action run details (results of the shown repos) for inline expansion."""
     from grimoire.actions.router import _engine as _actions_engine
 
     results_list: list[dict[str, Any]] = []
@@ -1023,7 +1050,10 @@ async def action_run_partial(request: Request, run_id: int) -> HTMLResponse:
                     params={"run_id": run_id},
                 )
             ).all()
+        shown = _result_repo_filter(selection)
         for row in rows:
+            if not shown(row[1]):
+                continue
             results_list.append(
                 {
                     "id": row[0],
@@ -1046,10 +1076,16 @@ async def action_run_partial(request: Request, run_id: int) -> HTMLResponse:
 
 @router.get("/partials/action-results/{slug}", response_class=HTMLResponse)
 async def action_results_partial(
-    request: Request, slug: str, sort: str = "repo", dir: str = "asc"
+    request: Request,
+    slug: str,
+    sort: str = "repo",
+    dir: str = "asc",
+    selection: SpaceSelection = Depends(html_space_selection),
 ) -> HTMLResponse:
-    """Return per-action results grouped by run for inline expansion."""
+    """Return per-action results (of the shown repos) grouped by run for inline expansion."""
     from grimoire.actions.router import _engine as _actions_engine
+
+    shown = _result_repo_filter(selection)
 
     runs: list[dict[str, Any]] = []
     if _actions_engine is not None:
@@ -1084,7 +1120,10 @@ async def action_results_partial(
                     "passed": bool(r[3]),
                 }
                 for r in result_rows
+                if shown(r[1])
             ]
+            if result_rows and not results_list:
+                continue  # none of this run's repos are in the selection
 
             # Sort results within the run
             sort_keys: dict[str, Any] = {
@@ -1175,11 +1214,17 @@ async def check_output_partial(request: Request, result_id: int) -> HTMLResponse
 
 @router.get("/partials/check-results/{slug}", response_class=HTMLResponse)
 async def check_results_partial(
-    request: Request, slug: str, sort: str = "repo", dir: str = "asc"
+    request: Request,
+    slug: str,
+    sort: str = "repo",
+    dir: str = "asc",
+    selection: SpaceSelection = Depends(html_space_selection),
 ) -> HTMLResponse:
-    """Return per-check results grouped by run for inline expansion."""
+    """Return per-check results (of the shown repos) grouped by run for inline expansion."""
     from grimoire.checks.router import _checks
     from grimoire.checks.router import _engine as _checks_engine
+
+    shown = _result_repo_filter(selection)
 
     # Determine severity for this check
     severity = "error"
@@ -1222,7 +1267,10 @@ async def check_results_partial(
                     "timestamp": r[4],
                 }
                 for r in result_rows
+                if shown(r[1])
             ]
+            if result_rows and not results_list:
+                continue  # none of this run's repos are in the selection
 
             # Sort results within the run
             sort_keys: dict[str, Any] = {
@@ -1264,6 +1312,7 @@ async def check_results_partial(
             )
             async with AsyncSession(_checks_engine) as session:
                 orphan_rows = (await session.execute(orphan_query, params={"slug": slug})).all()
+            orphan_rows = [r for r in orphan_rows if shown(r[1])]
             if orphan_rows:
                 results_list = [
                     {
@@ -1374,7 +1423,7 @@ async def refresh_trigger(request: Request, background_tasks: BackgroundTasks) -
         raise HTTPException(status_code=500, detail="Refresh not configured")
 
     if not is_refresh_running():
-        from collections.abc import Awaitable, Callable
+        from collections.abc import Awaitable
 
         callback: Callable[[], Awaitable[None]] = _refresh_callback  # type: ignore[assignment]
         background_tasks.add_task(callback)

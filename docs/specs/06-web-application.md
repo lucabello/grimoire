@@ -339,6 +339,15 @@ The "Run" button triggers the action via HTMX and reloads the page after 1.5s:
 </button>
 ```
 
+### Space filter (Checks and Actions pages)
+
+The Checks page, the Actions page and their partials (`/partials/check-results/{slug}`, `/partials/action-results/{slug}`, `/partials/action-run/{run_id}`) use the HTML selection (6.12):
+
+- **Listed:** definitions with empty `spaces` (global) or `spaces` intersecting the selection. All lists everything; `_unassigned` alone lists only the global ones.
+- **Results:** per-repo results are shown only for repos in the selection (`SpaceSelection.repo_name_filter()`, a predicate on the repo full name). Results of global actions (`GLOBAL_REPO == "(global)"`) are always shown. The pass/fail summary on each card and in each run header is computed over the shown results; a run none of whose repos is in the selection is not listed.
+- **Running is unchanged:** a manual or scheduled run uses the definition's `targets` whatever the selection. The run-status partials and run/toggle endpoints do not read the selection.
+- The list APIs (`GET /api/checks`, `GET /api/actions`) and `GET /api/checks/{slug}/results` accept `?spaces=` via `api_space_selection` and ignore the cookie.
+
 ## 6.6 — Checks Page
 
 **Route:** `GET /checks`
@@ -638,6 +647,7 @@ HTML pages and HTMX partials filter by the user's space selection; the JSON API 
 - [ ] Repository detail page shows stale issues/PRs, workflow table, check results
 - [ ] Check output is expandable on the detail page
 - [ ] Actions page lists all available actions with run buttons
+- [ ] Checks and Actions pages list global definitions plus those of the selected spaces, show results and summary counts only for the selected repos, and a manual run under a narrow selection still runs on all targets; the APIs ignore the cookie
 - [ ] Run history shows all runs with correct metadata
 - [ ] Action run details expand inline with per-repo results and logs
 - [ ] Backlog page lists all problems sorted by priority score

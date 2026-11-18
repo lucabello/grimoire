@@ -165,7 +165,7 @@ async def run_action(
 
 | Method | Path | Description |
 |--------|------|-------------|
-| `GET` | `/api/actions` | List all action definitions |
+| `GET` | `/api/actions` | List action definitions. Optional `?spaces=a,b` keeps the actions listed under those spaces plus the global ones (empty `spaces`); `_unassigned` alone lists only the global ones. Each item exposes `spaces`. Never reads the cookie |
 | `GET` | `/api/actions/{slug}/runs` | List run history for an action (paginated, reverse chronological) |
 | `GET` | `/api/actions/{slug}/runs/{run_id}` | Get a specific run with per-repo results + logs |
 | `GET` | `/api/actions/{slug}/status` | Check if currently running: `{"slug": ..., "running": bool}` |

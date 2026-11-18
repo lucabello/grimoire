@@ -24,6 +24,9 @@ if TYPE_CHECKING:
     from grimoire.models import TrackedRepository
     from grimoire.workspace.manager import WorkspaceManager
 
+# Result rows of global actions (no `targets`) are stored under this pseudo repo name.
+GLOBAL_REPO = "(global)"
+
 OUTPUT_SIZE_CAP = 64 * 1024  # 64 KB
 _DEFAULT_TIMEOUT = 600  # 10 minutes
 
@@ -106,7 +109,7 @@ async def run_action(
             progress.total = 1
             passed, output = await _execute_global_action(action, workspace)
             result = ActionRepoResult(
-                repo_full_name="(global)",
+                repo_full_name=GLOBAL_REPO,
                 branch="",
                 passed=passed,
                 output=output,
@@ -116,7 +119,7 @@ async def run_action(
 
             repo_record = ActionRunRepoRecord(
                 run_id=run_id,
-                repo_full_name="(global)",
+                repo_full_name=GLOBAL_REPO,
                 branch="",
                 passed=passed,
                 output=output,

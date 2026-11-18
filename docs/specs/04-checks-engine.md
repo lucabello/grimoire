@@ -241,8 +241,8 @@ See Module 7 (§7.4, `docker/entrypoint.sh`) for implementation details and desi
 
 | Method | Path | Description |
 |--------|------|-------------|
-| `GET` | `/api/checks` | List all check definitions + enabled status |
-| `GET` | `/api/checks/{slug}/results` | Latest results for a check, grouped by repo+branch |
+| `GET` | `/api/checks` | List check definitions + enabled status. Optional `?spaces=a,b` keeps the checks listed under those spaces plus the global ones (empty `spaces`); `_unassigned` alone lists only the global ones. Each item exposes `spaces`. Never reads the cookie |
+| `GET` | `/api/checks/{slug}/results` | Latest results for a check, grouped by repo+branch. Optional `?spaces=` keeps only the results of repos in those spaces |
 | `GET` | `/api/checks/{slug}/runs` | List run history (reverse chronological) |
 | `GET` | `/api/checks/{slug}/runs/{run_id}` | Get a specific run with per-repo results |
 | `GET` | `/api/checks/{slug}/status` | Check if currently running: `{"slug": ..., "running": bool}` |
@@ -259,6 +259,7 @@ class CheckListItem(BaseModel):
     schedule: str | None
     enabled: bool
     target_count: int  # number of repos this check applies to
+    spaces: list[str]  # definition's spaces; empty = global
 
 class CheckResultResponse(BaseModel):
     check_name: str
