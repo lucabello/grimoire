@@ -248,6 +248,34 @@ class TestSelectorUI:
         assert "checked" in row_b
         assert "checked" not in row_a
 
+    async def test_name_is_the_label_of_the_checkbox_and_only_is_separate(
+        self, spaces: None, web_client: AsyncClient
+    ) -> None:
+        html = (await web_client.get("/")).text
+        row = html.split('data-space-row="alpha"')[1].split("</li>")[0]
+        # clicking the name toggles the checkbox, like clicking the box itself
+        assert row.index("<label") < row.index('data-space-id="a"') < row.index("Alpha</span>")
+        assert row.index("Alpha</span>") < row.index("</label>")
+        # "only" is the one control that selects a single space, and the name is not one
+        assert row.count("data-space-only") == 1
+        assert ">only</button>" in row
+
+    async def test_repo_counts_are_spelled_out(
+        self, spaces: None, web_client: AsyncClient
+    ) -> None:
+        for repo in get_tracked_repos():
+            repo.memberships = [RepoMembership(space="a")]
+        html = (await web_client.get("/")).text
+        row_a = html.split('data-space-row="alpha"')[1].split("</li>")[0]
+        row_b = html.split('data-space-row="beta"')[1].split("</li>")[0]
+        assert "2 repos<" in row_a  # both cached repos are in a
+        assert "0 repos<" in row_b
+        for repo in get_tracked_repos()[:1]:
+            repo.memberships = [RepoMembership(space="b")]
+        html = (await web_client.get("/")).text
+        assert "1 repo<" in html.split('data-space-row="beta"')[1].split("</li>")[0]
+        assert "1 repos" not in html
+
     async def test_cookie_is_written_with_the_root_path(
         self, spaces: None, web_client_with_root_path: AsyncClient
     ) -> None:

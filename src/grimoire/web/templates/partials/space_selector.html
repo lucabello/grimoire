@@ -34,12 +34,15 @@
             {% for space in spaces %}
             <li data-space-row="{{ space.name | lower }}">
                 <div class="flex items-center gap-2 py-1 px-2 {% if space.id == '_unassigned' %}opacity-70{% endif %}" title="{{ space.description }}">
-                    <input type="checkbox" class="checkbox checkbox-xs" data-space-id="{{ space.id }}" data-name="{{ space.name }}" aria-label="{{ space.name }}"
-                           {% if selected_ids is none or space.id in selected_ids %}checked{% endif %}>
-                    <span data-space-dot>{{ space_dot(space.color, space.id == "_unassigned") }}</span>
-                    <button type="button" class="flex-1 text-left truncate" data-space-only="{{ space.id }}">{{ space.name }}</button>
-                    <span class="text-xs opacity-50 font-mono-nums">{{ space.repo_count }}</span>
-                    <button type="button" class="link link-hover text-xs opacity-70" data-space-only="{{ space.id }}">only</button>
+                    {# The name is part of the checkbox's label: clicking it toggles the box. #}
+                    <label class="flex flex-1 items-center gap-2 min-w-0 cursor-pointer">
+                        <input type="checkbox" class="checkbox checkbox-xs" data-space-id="{{ space.id }}" data-name="{{ space.name }}"
+                               {% if selected_ids is none or space.id in selected_ids %}checked{% endif %}>
+                        <span data-space-dot>{{ space_dot(space.color, space.id == "_unassigned") }}</span>
+                        <span class="truncate">{{ space.name }}</span>
+                    </label>
+                    <span class="text-xs opacity-50 whitespace-nowrap">{{ space.repo_count }} {{ "repo" if space.repo_count == 1 else "repos" }}</span>
+                    <button type="button" class="link link-hover text-xs opacity-70" data-space-only="{{ space.id }}" title="Show only {{ space.name }}">only</button>
                 </div>
             </li>
             {% endfor %}
