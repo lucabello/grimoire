@@ -1,0 +1,89 @@
+{# Navbar multi-select of spaces. Hidden entirely when no spaces are configured. #}
+{% from "partials/_space_macros.html" import space_dot with context %}
+{% if spaces %}
+{% set selected_ids = space_selection.ids %}
+{% set selected = spaces if selected_ids is none else spaces | selectattr("id", "in", selected_ids) | list %}
+{% if selected_ids is none %}
+    {% set label = "All spaces" %}
+{% elif selected | length == 1 %}
+    {% set label = selected[0].name %}
+{% else %}
+    {% set label = selected[0].name ~ " +" ~ (selected | length - 1) %}
+{% endif %}
+<div class="dropdown" id="space-selector" data-cookie-path="{{ base_path or '/' }}">
+    <div tabindex="0" role="button" class="btn btn-ghost btn-sm gap-2 normal-case" aria-haspopup="true" aria-label="Filter by space">
+        <span class="flex items-center">
+            {% for space in selected[:3] %}
+            <span class="-ml-1 first:ml-0 rounded-full ring-2 ring-base-100 inline-flex">{{ space_dot(space.color, space.id == "_unassigned") }}</span>
+            {% endfor %}
+        </span>
+        <span id="space-selector-label">{{ label }}</span>
+        <i class="fa-solid fa-chevron-down text-xs opacity-60"></i>
+    </div>
+    <div tabindex="0" class="dropdown-content z-30 mt-1 w-72 rounded-box bg-base-100 border border-base-300 shadow-xl p-2">
+        <div class="flex items-center justify-between px-2 pb-1 text-xs uppercase tracking-wide opacity-60">
+            <span>Spaces</span>
+            <span class="flex gap-2 normal-case tracking-normal">
+                <button type="button" class="link link-hover" data-space-action="all">All</button>
+                <button type="button" class="link link-hover" data-space-action="none">None</button>
+            </span>
+        </div>
+        <ul class="menu menu-sm p-0">
+            {% for space in spaces %}
+            <li class="group">
+                <div class="flex items-center gap-2 py-1 px-2 {% if space.id == '_unassigned' %}opacity-70{% endif %}" title="{{ space.description }}">
+                    <input type="checkbox" class="checkbox checkbox-xs" data-space-id="{{ space.id }}" aria-label="{{ space.name }}"
+                           {% if selected_ids is none or space.id in selected_ids %}checked{% endif %}>
+                    {{ space_dot(space.color, space.id == "_unassigned") }}
+                    <button type="button" class="flex-1 text-left truncate" data-space-only="{{ space.id }}">{{ space.name }}</button>
+                    <span class="text-xs opacity-50 font-mono-nums">{{ space.repo_count }}</span>
+                    <button type="button" class="link link-hover text-xs opacity-0 group-hover:opacity-100 focus:opacity-100" data-space-only="{{ space.id }}">only</button>
+                </div>
+            </li>
+            {% endfor %}
+        </ul>
+        <div class="px-2 pt-1 text-xs opacity-50">saved in this browser</div>
+    </div>
+</div>
+<script>
+(function () {
+    const root = document.getElementById('space-selector');
+    const boxes = Array.from(root.querySelectorAll('input[data-space-id]'));
+    let changed = false;
+
+    function saveCookie() {
+        const picked = boxes.filter(b => b.checked).map(b => b.dataset.spaceId);
+        // Nothing or everything selected means All: the server normalises the same way.
+        const value = picked.length === boxes.length ? '' : picked.join(',');
+        document.cookie = 'grimoire_spaces=' + value + '; Max-Age=31536000; Path=' +
+            root.dataset.cookiePath + '; SameSite=Lax';
+        changed = true;
+    }
+
+    function setChecked(ids) {
+        boxes.forEach(b => { b.checked = ids.includes(b.dataset.spaceId); });
+        saveCookie();
+    }
+
+    boxes.forEach(b => b.addEventListener('change', saveCookie));
+    root.querySelectorAll('[data-space-only]').forEach(el => {
+        el.addEventListener('click', () => setChecked([el.dataset.spaceOnly]));
+    });
+    root.querySelector('[data-space-action="all"]').addEventListener('click', () => setChecked(boxes.map(b => b.dataset.spaceId)));
+    root.querySelector('[data-space-action="none"]').addEventListener('click', () => setChecked([]));
+
+    // The dropdown closes when focus leaves it: apply the selection by reloading, so every
+    // page and HTMX partial picks it up through the cookie. Drop ?spaces= first: it would
+    // override the cookie that was just written.
+    root.addEventListener('focusout', (event) => {
+        if (!changed || root.contains(event.relatedTarget)) return;
+        const url = new URL(window.location.href);
+        url.searchParams.delete('spaces');
+        window.location.replace(url.toString());
+    });
+    root.addEventListener('keydown', (event) => {
+        if (event.key === 'Escape' && document.activeElement) document.activeElement.blur();
+    });
+})();
+</script>
+{% endif %}

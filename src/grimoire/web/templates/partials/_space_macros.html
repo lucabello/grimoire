@@ -1,0 +1,14 @@
+{# Space dots and badges. Import with context: {% from "partials/_space_macros.html" import space_badges with context %} #}
+{% macro space_dot(color, unassigned=false) -%}
+<span class="inline-block w-2.5 h-2.5 rounded-full shrink-0 {% if unassigned %}border border-dashed border-base-content/60{% elif not color %}bg-base-content/40{% endif %}"{% if color %} style="background-color: {{ color }}"{% endif %}></span>
+{%- endmacro %}
+
+{# One small colored dot and the name per space of the repo; nothing when no spaces are configured. #}
+{% macro space_badges(repo) -%}
+{%- if spaces -%}
+{%- for space_id in repo.spaces -%}
+{%- set space = spaces | selectattr("id", "equalto", space_id) | first -%}
+{%- if space %}<span class="inline-flex items-center gap-1 text-xs opacity-70 whitespace-nowrap" title="Space: {{ space.name }}">{{ space_dot(space.color) }}{{ space.name }}</span>{% endif -%}
+{%- endfor -%}
+{%- endif -%}
+{%- endmacro %}

@@ -194,3 +194,81 @@ class TestRealApp:
         web_client.cookies.set(COOKIE_NAME, "a")
         resp = await web_client.get("/")
         assert "set-cookie" not in resp.headers
+
+
+class TestSelectorUI:
+    async def test_absent_without_configured_spaces(self, web_client: AsyncClient) -> None:
+        set_spaces_config([])
+        for path in ("/", "/backlog", "/prs"):
+            assert 'id="space-selector"' not in (await web_client.get(path)).text
+
+    async def test_present_with_one_row_per_space_and_unassigned(
+        self, spaces: None, web_client: AsyncClient
+    ) -> None:
+        html = (await web_client.get("/")).text
+        assert 'id="space-selector"' in html
+        for space_id in ("a", "b", "_unassigned"):
+            assert f'data-space-id="{space_id}"' in html
+        assert "saved in this browser" in html
+
+    async def test_unassigned_row_only_when_offered(
+        self, spaces: None, web_client: AsyncClient
+    ) -> None:
+        for repo in get_tracked_repos():
+            repo.memberships = [RepoMembership(space="a")]
+        html = (await web_client.get("/")).text
+        assert 'data-space-id="a"' in html
+        assert 'data-space-id="_unassigned"' not in html
+
+    @pytest.mark.parametrize(
+        ("cookie", "label"),
+        [
+            ("", "All spaces"),
+            ("b", "Beta"),
+            ("a,b", "Alpha +1"),
+            ("a,b,_unassigned", "All spaces"),
+        ],
+    )
+    async def test_collapsed_label(
+        self, spaces: None, web_client: AsyncClient, cookie: str, label: str
+    ) -> None:
+        web_client.cookies.set(COOKIE_NAME, cookie)
+        html = (await web_client.get("/")).text
+        assert f'<span id="space-selector-label">{label}</span>' in html
+
+    async def test_checked_boxes_follow_the_selection(
+        self, spaces: None, web_client: AsyncClient
+    ) -> None:
+        web_client.cookies.set(COOKIE_NAME, "b")
+        html = (await web_client.get("/")).text
+        row_b = html.split('data-space-id="b"')[1].split(">")[0]
+        row_a = html.split('data-space-id="a"')[1].split(">")[0]
+        assert "checked" in row_b
+        assert "checked" not in row_a
+
+    async def test_cookie_path_follows_root_path(
+        self, spaces: None, web_client_with_root_path: AsyncClient
+    ) -> None:
+        html = (await web_client_with_root_path.get("/")).text
+        assert 'data-cookie-path="/grimoire"' in html
+
+    async def test_cookie_path_is_slash_without_root_path(
+        self, spaces: None, web_client: AsyncClient
+    ) -> None:
+        assert 'data-cookie-path="/"' in (await web_client.get("/")).text
+
+    async def test_repo_detail_shows_space_badges(
+        self, spaces: None, web_client: AsyncClient
+    ) -> None:
+        from tests.test_web.conftest import _populate_cache
+
+        _populate_cache()
+        for repo in get_tracked_repos():
+            repo.memberships = [RepoMembership(space="a"), RepoMembership(space="b")]
+        html = (await web_client.get("/repo/acme/api")).text
+        assert 'title="Space: Alpha"' in html
+        assert 'title="Space: Beta"' in html
+
+    async def test_repo_detail_has_no_badges_without_spaces(self, web_client: AsyncClient) -> None:
+        set_spaces_config([])
+        assert "Space: " not in (await web_client.get("/repo/acme/api")).text

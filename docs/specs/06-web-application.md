@@ -601,6 +601,16 @@ HTML pages and HTMX partials filter by the user's space selection; the JSON API 
 - `html_space_selection(request) -> SpaceSelection` (dependency used by page routes): `?spaces=a,b` beats the cookie `grimoire_spaces` (comma-separated ids). Unknown ids are dropped; an empty selection or every space selected is All.
 - A request with a `?spaces=` parameter also saves the normalised selection in the cookie `grimoire_spaces` (`Max-Age` one year, `SameSite=Lax`, `Path` = the app `root_path` or `/`; not `HttpOnly`, the navbar script writes it too). All is saved as an empty value. FastAPI does not merge cookies set through a dependency into a directly returned `TemplateResponse`, so the dependency only records the value on `request.state` and `space_cookie_middleware` appends the `Set-Cookie` header to the response. The selection is resolved once per request.
 - The context processor on `templates` gives every template `spaces` (the shape of `GET /api/spaces`: `id`, `name`, `color`, `description`, `repo_count`; empty when no spaces are configured) and `space_selection` (a `SpaceSelection`; `.ids` is `None` for All).
+### Navbar selector and badges
+
+**Files:** `templates/base.html` (includes the selector inside the left navbar block, next to the logo), `templates/partials/space_selector.html`, `templates/partials/_space_macros.html`, `templates/repository.html`.
+
+- Hidden entirely when `spaces` is empty (installs without spaces see no change).
+- Collapsed label: "All spaces" (All), `<name>` (one), `<first name> +N` (several, first in config order), preceded by up to three stacked color dots. A space without a color gets a muted dot, Unassigned a dashed one.
+- Dropdown (DaisyUI, focus-based): header "Spaces" with **All** / **None**; one row per space with checkbox, color dot, name, repo count and an **only** action (clicking the name also selects only that space); the Unassigned row (dashed dot, muted) only when `GET /api/spaces` offers it; footer hint "saved in this browser". None selects nothing, which means All.
+- Changing the selection writes the `grimoire_spaces` cookie from JavaScript (same attributes as the server: `Path` = `data-cookie-path` = root_path or `/`, `Max-Age` one year, `SameSite=Lax`; nothing or every row checked is written as an empty value) and reloads the page when the dropdown loses focus, so every page and HTMX partial picks it up through the cookie. The reload drops `?spaces=` from the URL because it would override the cookie.
+- Macros (import with context): `space_dot(color, unassigned=false)` and `space_badges(repo)`, which renders a small colored dot and the name per space of `repo.spaces`. The repository detail page shows them under the title; the page beads reuse them next to repo names.
+
 - Page tasks filter with `space_selection.includes(repo)` and `space_selection.workflow_visible(repo, workflow_name)`.
 
 ## Acceptance Criteria
@@ -625,6 +635,7 @@ HTML pages and HTMX partials filter by the user's space selection; the JSON API 
 - [ ] PRs page shows one section per group with CI badge, repository, linked title, labels, draft and auto-merge badges, author, review/merge badges, age and last update; chips, search, `ci` filter, sort and group selection work through HTMX; all empty states render
 - [ ] `GET /api/prs` returns the groups with their PRs without GitHub calls; `/maintenance` and `/api/maintenance/groups` are gone
 - [ ] `?spaces=` beats the `grimoire_spaces` cookie on HTML pages and is saved to it (Max-Age 1 year, SameSite=Lax, Path = root_path); unknown ids are dropped; `/api/*` ignores the cookie; `GET /api/spaces` lists the spaces, plus Unassigned only when unassigned repos exist
+- [ ] The navbar selector is absent without spaces; labels for All / one / several are right; only, All and None work; the selection survives reload and browser restart; it works under `--root-path`
 - [ ] HTMX partial updates work without full page reloads
 - [ ] Pages render correctly in both light and dark mode
 - [ ] Pages are responsive (usable on tablet/mobile, scrollable tables)
