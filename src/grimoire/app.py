@@ -63,6 +63,7 @@ from grimoire.prs import set_prs_config
 from grimoire.security import cross_site_guard
 from grimoire.spaces import router as spaces_router
 from grimoire.spaces import set_spaces_config, validate_definition_spaces
+from grimoire.web.problems import router as problems_router
 from grimoire.web.router import router as web_router
 from grimoire.web.router import (
     set_backlog_config,
@@ -327,6 +328,7 @@ def create_app() -> FastAPI:
     app.include_router(checks_router, prefix="/api")
     app.include_router(actions_router, prefix="/api")
     app.include_router(prs_router, prefix="/api")
+    app.include_router(problems_router, prefix="/api")
     app.include_router(spaces_router, prefix="/api")
 
     # Observability

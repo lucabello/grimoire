@@ -53,6 +53,7 @@ grimoire/
 │   ├── web/
 │   │   ├── __init__.py
 │   │   ├── router.py             # HTML page routes
+│   │   ├── problems.py           # REST API: GET /api/problems (structured current problems)
 │   │   ├── spaces.py             # HTML space selection: cookie, ?spaces=, template context
 │   │   ├── templates/            # Jinja2 templates
 │   │   │   ├── base.html
@@ -206,6 +207,7 @@ log_file: "./grimoire.log"
 | `GET` | `/api/actions/{slug}/runs/{id}` | Get specific run details + logs |
 | `POST` | `/api/actions/{slug}/run` | Trigger action (optional `?repo=`); 409 if running |
 | `GET` | `/api/prs` | Open PRs of each configured PR group with CI, review and merge state (cache only; no GitHub calls; optional `?spaces=a,b`) |
+| `GET` | `/api/problems` | Structured list of what is currently wrong: failing workflows, failing PR CI, failing checks, repo warnings (cache and latest check results only; optional `?kind=a,b`, `?spaces=a,b`) |
 | `GET` | `/health` | Health check (for Docker HEALTHCHECK / k8s probes) |
 
 `?spaces=` takes comma-separated space ids (`_unassigned` for repos in no space); the JSON API never reads the `grimoire_spaces` cookie that the HTML pages use.

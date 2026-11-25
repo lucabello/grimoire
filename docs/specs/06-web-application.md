@@ -10,7 +10,7 @@ Build the HTMX-powered web frontend with six pages: dashboard overview, individu
 
 Update `create_app()` to:
 
-- Mount all API routers (checks, actions, repos, prs, spaces) and the space cookie middleware (6.12).
+- Mount all API routers (checks, actions, repos, prs, problems, spaces) and the space cookie middleware (6.12).
 - Mount web router for HTML pages.
 - Mount static files at `/static`.
 - Set up Jinja2 template environment.
@@ -43,6 +43,7 @@ def create_app() -> FastAPI:
     app.include_router(checks_router, prefix="/api")
     app.include_router(actions_router, prefix="/api")
     app.include_router(prs_router, prefix="/api")
+    app.include_router(problems_router, prefix="/api")
     app.include_router(spaces_router, prefix="/api")
     app.include_router(web_router)
     app.mount("/static", StaticFiles(directory="..."), name="static")
@@ -662,6 +663,38 @@ HTML pages and HTMX partials filter by the user's space selection; the JSON API 
 
 - Page tasks filter with `space_selection.includes(repo)` and `space_selection.workflow_visible(repo, workflow_name)`.
 
+## 6.13 — Problems API
+
+**File:** `src/grimoire/web/problems.py` (response models, pure `collect_problems(...)`, `load_failing_checks()` and the router, mounted with `prefix="/api"`). **Route:** `GET /api/problems` (no trailing slash, so no 307).
+
+The structured sibling of the backlog (6.7): it answers "what is currently wrong?" in one request for a downstream agent. It says what and where, not why (no logs, failing steps or analysis), and is unweighted: no scores, no ranking (items are ordered by repository name, then workflows, PRs, checks, warnings). The backlog stays as it is.
+
+It reads the in-memory cache (`github.router._cache`, `_repos`, `_last_refresh`), the check definitions and the latest `check_result` rows. No GitHub calls, no cookie, no schema change. `?spaces=a,b` uses `api_space_selection`. `?kind=a,b` is comma-separated; an unknown kind is a `422`.
+
+```json
+{ "last_refresh": "2026-11-06T21:05:00Z",
+  "counts": {"workflow_failure": 1, "pr_ci_failure": 0, "check_failure": 0, "repo_warning": 0},
+  "problems": [{ "kind": "workflow_failure", "severity": "error", "repo": "o/r", "branch": "main",
+                 "subject": "CI", "summary": "Workflow 'CI' failing on main", "url": "…",
+                 "observed_at": "…", "detail": { "kind": "workflow_failure", "run_id": 1, "…": "…" } }] }
+```
+
+- `counts` has every `ProblemKind` as a key (`0` when none); it is computed after the space filter and before the kind filter.
+- `last_refresh` is `null` until the first refresh: an empty list is then "no data", not "healthy".
+- Item fields: `kind`, `severity` (`error`|`warning`; a check with `severity: warning` reports `warning`), `repo`, `branch` (nullable), `subject`, `summary`, `url` (nullable), `observed_at` (nullable) and `detail`. `observed_at` is when the problem was last observed, not when it started: only the latest run is stored, so "failing since" is unknowable.
+- `detail` is a Pydantic discriminated union on `kind` (`Annotated[..., Field(discriminator="kind")]`), one small model per kind, visible in OpenAPI. Fields are only added, never renamed.
+
+| Kind | Rule | `detail` | `observed_at` | `url` |
+|---|---|---|---|---|
+| `workflow_failure` | `RepositoryStats.workflows` entries with `status == "failure"` and `selection.workflow_visible(repo, name)`. `failure` includes cancelled and timed-out runs; `conclusion` tells them apart. | `run_id`, `run_attempt`, `event`, `conclusion`, `head_sha`, `run_url` | `run_started_at`, else `created_at` | the run (else the workflow) |
+| `pr_ci_failure` | `stats.open_pr_items` with `ci_state == "failure"`, iterated directly (not through groups), so a PR in several groups appears once. `branch` is the PR's head branch. | `number`, `author`, `draft`, `labels`, `review_decision`, `merge_state`, `auto_merge`, `head_sha`, `ci_url`, `ci_checked_at` | `ci_checked_at` | the PR |
+| `check_failure` | Latest `check_result` per (check, repo, branch) with `passed == false`; same semantics as the backlog: enabled checks only, repos in the cache, the selection and the tracked branches (`repo.branches or [default_branch]`). Severity is the check's. | `check_slug`, `output`, `output_truncated`, `results_path`, `timestamp` | result timestamp | `null` |
+| `repo_warning` | One item per `stats.warnings` entry; severity `warning`, `branch` `null`. | `warning` | `stats.fetched_at` | `null` |
+
+- **PR limitation.** Only PRs matched by some `prs.groups` entry have a CI state (spec 6.11); an ungrouped PR has `ci_state` `None` and produces no item. A `PRGroup` with only `repos` is rejected by the `at_least_one_matcher` validator, so there is no catch-all group; two groups, `draft: true` and `draft: false`, are a workaround.
+- **Check output.** `output` is the last 2000 characters (failures show at the end), cut in SQL with `substr(cr.output, -2000)` so large rows are never loaded; `output_truncated` is `length(cr.output) > 2000`. `results_path` is `{root_path}/api/checks/{slug}/results`.
+- **Shared SQL.** The latest-result join is `_LATEST_RESULTS_FROM` in `web/router.py`, shared with `_LATEST_RESULTS_SQL`.
+
 ## Acceptance Criteria
 
 - [ ] Dashboard renders all tracked repos with correct stats
@@ -688,6 +721,7 @@ HTML pages and HTMX partials filter by the user's space selection; the JSON API 
 - [ ] PRs page shows one section per group with CI badge, repository, linked title, labels, draft and auto-merge badges, author, review/merge badges, age and last update; chips, search, `ci` filter, sort and group selection work through HTMX; all empty states render
 - [ ] The PRs page and partial show only the PRs of the selected spaces' repos and hide groups left empty; `GET /api/prs?spaces=` filters the PRs, keeps every group and ignores the cookie
 - [ ] `GET /api/prs` returns the groups with their PRs without GitHub calls; `/maintenance` and `/api/maintenance/groups` are gone
+- [ ] `GET /api/problems` lists failing workflows (cancelled and timed-out runs with their `conclusion`), failing PR CI (once per PR, only PRs covered by a group), failing enabled checks on tracked branches (output tail of at most 2000 characters with `output_truncated`) and repo warnings; `counts` has every kind; `?kind=` filters and rejects unknown kinds with 422; `?spaces=` filters and the cookie is ignored; its workflow and check failures agree with the backlog's
 - [ ] `?spaces=` beats the `grimoire_spaces` cookie on HTML pages and is saved to it (Max-Age 1 year, SameSite=Lax, Path = root_path); unknown ids are dropped; `/api/*` ignores the cookie; `GET /api/spaces` lists the spaces, plus Unassigned only when unassigned repos exist
 - [ ] The navbar selector is absent without spaces; the button reads "Spaces" / the name / "Spaces (N)"; no colour is used for spaces; ticking a checkbox toggles one space, clicking a row shows only that space, All and None work; the selection survives reload and browser restart; it works under `--root-path`
 - [ ] A cross-site `POST` (foreign `Origin`, or `Sec-Fetch-Site: cross-site`/`same-site`) to any state-changing route is rejected with 403 and changes nothing; same-origin, `Sec-Fetch-Site: none` and header-less requests are allowed; `GET` is unaffected
