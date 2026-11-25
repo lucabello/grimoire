@@ -421,9 +421,8 @@ def _resolve_targets_sync(
     return set()
 
 
-_LATEST_RESULTS_SQL = text(
-    "SELECT cr.id, cr.check_name, cr.check_slug, cr.repo_full_name, cr.branch, "
-    "cr.passed, cr.timestamp "
+# The latest result per (check, repo, branch); shared with the problems endpoint.
+_LATEST_RESULTS_FROM = (
     "FROM check_result cr "
     "INNER JOIN ("
     "  SELECT check_slug, repo_full_name, branch, MAX(timestamp) AS max_ts "
@@ -433,6 +432,11 @@ _LATEST_RESULTS_SQL = text(
     "AND cr.repo_full_name = latest.repo_full_name "
     "AND cr.branch = latest.branch "
     "AND cr.timestamp = latest.max_ts"
+)
+
+_LATEST_RESULTS_SQL = text(
+    "SELECT cr.id, cr.check_name, cr.check_slug, cr.repo_full_name, cr.branch, "
+    "cr.passed, cr.timestamp " + _LATEST_RESULTS_FROM
 )
 
 
